@@ -17,7 +17,12 @@ def _cache_path(ticker: str, start: str, end: str) -> str:
     return os.path.join(DATA_DIR, f"{ticker}_{start}_{end}.csv")
 
 
-def load_prices(tickers: list[str], start: str, end: str) -> pd.DataFrame:
+def load_prices(
+    tickers: list[str],
+    start: str,
+    end: str,
+    ffill: bool = False,
+) -> pd.DataFrame:
     """
     Return a DataFrame of daily adjusted-close prices.
 
@@ -29,12 +34,16 @@ def load_prices(tickers: list[str], start: str, end: str) -> pd.DataFrame:
         ISO date, e.g. "2018-01-01"
     end : str
         ISO date, e.g. "2023-12-31"
+    ffill : bool
+        Forward-fill NaN values before the final dropna.  Use this for
+        slowly-moving series like T-bill yields that may have calendar
+        gaps on days when equity markets are open.
 
     Returns
     -------
     pd.DataFrame
         Index = DatetimeIndex, columns = tickers, values = adjusted close prices.
-        Rows with any NaN are dropped.
+        Rows with any remaining NaN after optional ffill are dropped.
     """
     os.makedirs(DATA_DIR, exist_ok=True)
     frames = {}
@@ -53,7 +62,10 @@ def load_prices(tickers: list[str], start: str, end: str) -> pd.DataFrame:
         series.name = ticker
         frames[ticker] = series
 
-    prices = pd.DataFrame(frames).dropna()
+    prices = pd.DataFrame(frames)
+    if ffill:
+        prices = prices.ffill()
+    prices = prices.dropna()
     prices.index.name = "date"
     return prices
 

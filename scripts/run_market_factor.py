@@ -20,7 +20,14 @@ END   = "2024-12-31"
 def main():
     print(f"Building market factor ({START} to {END})...")
     market_factor = build_market_factor(START, END)
-    print(f"  {len(market_factor)} trading days loaded.\n")
+    rf_ann_mean = market_factor["rf_rate"].mean() * 252 * 100
+    rf_ann_range = (
+        market_factor["rf_rate"].min() * 252 * 100,
+        market_factor["rf_rate"].max() * 252 * 100,
+    )
+    print(f"  {len(market_factor)} trading days loaded.")
+    print(f"  Risk-free rate (^IRX): mean {rf_ann_mean:.2f}% pa "
+          f"(range {rf_ann_range[0]:.2f}%–{rf_ann_range[1]:.2f}% pa)\n")
 
     results = []
     for ticker in TICKERS:

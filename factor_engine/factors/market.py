@@ -1,13 +1,22 @@
 """
-Market factor (CAPM beta).
+Market factor (CAPM beta) using proper excess returns.
 
-The market factor is the simplest Fama-French factor: excess return of a
-broad market portfolio over the risk-free rate.  Here we use SPY as the
-market proxy and the 13-week T-bill (^IRX) as the risk-free rate.
+Both the stock and the market return have the risk-free rate subtracted
+before the OLS regression, consistent with the standard CAPM specification:
 
-`compute_beta` runs an OLS regression of a stock's excess returns on the
-market's excess returns and returns the slope (beta), intercept (alpha),
-and summary statistics.
+    r_i - r_f = α + β(r_m - r_f) + ε
+
+Risk-free rate source: ^IRX (CBOE 13-Week Treasury Bill index) via Yahoo
+Finance.  This is the standard 3-month T-bill proxy used in practitioner
+factor models.  The official Fama-French RF series uses the 1-month T-bill
+from CRSP, but the spread between the two is typically < 5 bp — negligible
+at daily frequency.  ^IRX requires no API key and is already accessible
+through the project's yfinance data layer.
+
+Conversion: annualised bank-discount percent → daily decimal
+    rf_daily = (annualised_pct / 100) / 252
+The /252 divisor (252 trading days per year) is the same convention Fama-
+French uses when publishing their daily factor series.
 """
 
 import numpy as np
@@ -18,36 +27,41 @@ from statsmodels.tools import add_constant
 from factor_engine.data_loader import load_returns, load_prices
 
 MARKET_PROXY = "SPY"
-RISK_FREE_PROXY = "^IRX"  # annualised 13-week T-bill yield in percent
+RISK_FREE_TICKER = "^IRX"  # CBOE 13-week T-Bill index, annualised percent
 
 
 def _load_risk_free_rate(start: str, end: str) -> pd.Series:
-    """Return a daily risk-free rate aligned to trading days, as a decimal."""
-    rf_annual_pct = load_prices([RISK_FREE_PROXY], start, end)[RISK_FREE_PROXY]
-    # ^IRX is quoted as an annualised percent; convert to a daily decimal rate
-    rf_daily = rf_annual_pct / 100 / 252
-    return rf_daily
+    """
+    Return the 13-week T-bill yield as a daily decimal risk-free rate.
+
+    Uses ffill so minor calendar gaps in ^IRX (days when equities trade but
+    the CBOE index has no quote) don't silently drop equity trading days.
+    """
+    rf_annual_pct = load_prices([RISK_FREE_TICKER], start, end, ffill=True)[RISK_FREE_TICKER]
+    return rf_annual_pct / 100 / 252
 
 
 def build_market_factor(start: str, end: str) -> pd.DataFrame:
     """
-    Construct the daily market excess-return factor.
+    Construct the daily market excess-return factor (Mkt-RF).
 
     Returns a DataFrame with columns:
-        market_return  — SPY log return
-        rf_rate        — daily risk-free rate
-        market_excess  — market_return minus rf_rate  (this is the factor)
+        market_return  — SPY daily log return
+        rf_rate        — daily risk-free rate (decimal)
+        market_excess  — market_return − rf_rate  (the Mkt-RF factor)
     """
     market_returns = load_returns([MARKET_PROXY], start, end)[MARKET_PROXY]
     rf_rate = _load_risk_free_rate(start, end)
 
-    aligned = pd.DataFrame({
-        "market_return": market_returns,
-        "rf_rate": rf_rate,
-    }).dropna()
+    # Reindex rf_rate to the equity calendar; forward-fill any remaining gaps
+    # (^IRX may be absent on some days SPY trades, e.g. certain US holidays).
+    rf_aligned = rf_rate.reindex(market_returns.index).ffill()
 
-    aligned["market_excess"] = aligned["market_return"] - aligned["rf_rate"]
-    return aligned
+    return pd.DataFrame({
+        "market_return": market_returns,
+        "rf_rate": rf_aligned,
+        "market_excess": market_returns - rf_aligned,
+    }).dropna()
 
 
 def compute_beta(
