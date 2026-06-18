@@ -1,0 +1,535 @@
+meta:
+  module: "Module 3 — 13F Smart-Money Positioning & Skill Tracker"
+  version: "1.0"
+  created: "2026-06-18"
+  description: >
+    Approved fund universe for 13F-based smart-money positioning analysis.
+    CIK numbers marked cik_status: confirmed are high-confidence from known filings.
+    CIK numbers marked cik_status: verify require EDGAR lookup before pipeline use.
+    Funds with filing_flags require special handling during data ingestion.
+    Conditional funds (conditional: true) must pass their threshold check before inclusion.
+  total_funds: 38          # 38 confirmed + 1 conditional (Situational Awareness LP)
+  edgar_search_url: "https://efts.sec.gov/LATEST/search-index?forms=13F-HR"
+  filing_threshold_usd: 100_000_000
+
+buckets:
+  - long_short_equity
+  - fundamental_value
+  - quant_systematic
+  - sector_specialist
+
+funds:
+
+  # ──────────────────────────────────────────────
+  # BUCKET 1: LONG/SHORT EQUITY
+  # ──────────────────────────────────────────────
+
+  - name: "Viking Global Investors"
+    manager: "Andreas Halvorsen"
+    bucket: long_short_equity
+    aum_tier: "large"          # ~$30B+
+    cik: "1166928"
+    cik_status: confirmed
+    filing_flags: []
+    notes: >
+      Quintessential Tiger Cub; long book is large, concentrated, and research-intensive.
+      Archetype for fundamental L/S; 13F captures the core of the equity book.
+
+  - name: "Lone Pine Capital"
+    manager: "Steve Mandel"
+    bucket: long_short_equity
+    aum_tier: "large"          # ~$15-20B
+    cik: "1061165"
+    cik_status: confirmed
+    filing_flags: []
+    notes: >
+      Blue-chip Tiger Cub; rigorous bottom-up research; both long and short books
+      meaningful relative to AUM.
+
+  - name: "Coatue Management"
+    manager: "Philippe Laffont"
+    bucket: long_short_equity
+    aum_tier: "large"          # ~$20B+
+    cik: "1108134"
+    cik_status: confirmed
+    filing_flags: []
+    notes: >
+      Tech-forward L/S Tiger Cub; substantial public equity book alongside private.
+      13F captures a well-defined technology long book.
+
+  - name: "Tiger Global Management"
+    manager: "Chase Coleman"
+    bucket: long_short_equity
+    aum_tier: "large"          # ~$20-25B
+    cik: "1166126"
+    cik_status: confirmed
+    filing_flags: []
+    notes: >
+      Most prominent Tiger Cub; public equity longs are the core signal even with
+      private crossover overlay.
+
+  - name: "Maverick Capital"
+    manager: "Lee Ainslie"
+    bucket: long_short_equity
+    aum_tier: "mid_large"      # ~$8-12B
+    cik: "893641"
+    cik_status: confirmed
+    filing_flags: []
+    notes: >
+      One of the original Tiger Cubs; methodical multi-sector fundamental research;
+      long book highly informative and low turnover.
+
+  - name: "D1 Capital Partners"
+    manager: "Dan Sundheim"
+    bucket: long_short_equity
+    aum_tier: "large"          # ~$15-20B
+    cik: "1769120"
+    cik_status: verify
+    filing_flags: []
+    notes: >
+      Viking spinout; high-quality fundamental L/S with public/private mix;
+      13F long book is clean and thesis-driven.
+
+  - name: "Glenview Capital Management"
+    manager: "Larry Robbins"
+    bucket: long_short_equity
+    aum_tier: "mid"            # ~$5-8B
+    cik: "1216595"
+    cik_status: verify
+    filing_flags: []
+    notes: >
+      Healthcare-heavy L/S with activist overlay; concentrated thesis-driven positions;
+      useful cross-reference against healthcare sector specialists.
+
+  - name: "Whale Rock Capital Management"
+    manager: "Alex Sacerdote"
+    bucket: long_short_equity
+    aum_tier: "mid_large"      # ~$8-12B
+    cik: "1504776"
+    cik_status: verify
+    filing_flags: []
+    notes: >
+      Tech/software growth L/S; former Fidelity; highly concentrated positions
+      make 13F especially informative.
+
+  - name: "Senator Investment Group"
+    manager: "Doug Silverman"
+    bucket: long_short_equity
+    aum_tier: "mid"            # ~$5-8B
+    cik: "1504444"
+    cik_status: verify
+    filing_flags: []
+    notes: >
+      Multi-sector L/S; strong risk management culture; less covered than Tiger Cubs —
+      good for analytical contrast.
+
+  - name: "Light Street Capital Management"
+    manager: "Glen Kacher"
+    bucket: long_short_equity
+    aum_tier: "mid"            # ~$3-5B
+    cik: null
+    cik_status: verify
+    filing_flags: []
+    notes: >
+      Tech-focused L/S; former Tiger Cub; concentrated long book; smaller and
+      less covered than Coatue/Tiger — less-covered name.
+
+  # ──────────────────────────────────────────────
+  # BUCKET 2: FUNDAMENTAL VALUE
+  # ──────────────────────────────────────────────
+
+  - name: "Pershing Square Capital Management"
+    manager: "Bill Ackman"
+    bucket: fundamental_value
+    aum_tier: "large"          # ~$15-20B
+    cik: "1336528"
+    cik_status: confirmed
+    filing_flags: []
+    notes: >
+      Highest-conviction activist value; positions are effectively public knowledge
+      via PSH listed vehicle; 13F is maximally informative.
+
+  - name: "Third Point LLC"
+    manager: "Dan Loeb"
+    bucket: fundamental_value
+    aum_tier: "large"          # ~$10-12B
+    cik: "1040273"
+    cik_status: confirmed
+    filing_flags: []
+    notes: >
+      Activist/event-driven value; equity positions are the core book; quarterly
+      investor letters provide narrative context alongside 13F data.
+
+  - name: "Baupost Group"
+    manager: "Seth Klarman"
+    bucket: fundamental_value
+    aum_tier: "large"          # ~$27-30B
+    cik: "1061219"
+    cik_status: verify
+    filing_flags:
+      - verify_filing_completeness
+    filing_completeness_note: >
+      Baupost has historically requested confidential treatment on portions of their
+      13F under Rule 24b-2. Holdings may be partially redacted or subject to a
+      delayed public release. Verify which positions are disclosed before relying
+      on this filing as a complete picture. Cross-reference with 13F amendment
+      filings (13F-HR/A) filed after the confidential period expires.
+    notes: >
+      The definitive deep value/distressed fund; long equity is one component
+      alongside distressed debt; 13F captures equity book only.
+
+  - name: "ValueAct Capital Management"
+    manager: "Mason Morfit"
+    bucket: fundamental_value
+    aum_tier: "mid"            # ~$5-8B
+    cik: "1418819"
+    cik_status: verify
+    filing_flags: []
+    notes: >
+      Pure activist value; takes board seats; very concentrated; long holding periods
+      make 13F nearly a complete picture of the book.
+
+  - name: "Starboard Value"
+    manager: "Jeff Smith"
+    bucket: fundamental_value
+    aum_tier: "mid"            # ~$5-8B
+    cik: null
+    cik_status: verify
+    filing_flags: []
+    notes: >
+      Activist value with operational improvement focus; concentrated disclosed
+      positions; good pairing with ValueAct for activist-signal analysis.
+
+  - name: "Greenlight Capital"
+    manager: "David Einhorn"
+    bucket: fundamental_value
+    aum_tier: "small_mid"      # ~$1-2B, contracted post-drawdown
+    cik: "1079114"
+    cik_status: verify
+    filing_flags: []
+    notes: >
+      Classic value L/S; AUM has contracted but historically important benchmark;
+      famous short theses complement the long book; quarterly letters add context.
+      Include despite smaller AUM for analytical continuity.
+
+  - name: "Horizon Kinetics"
+    manager: "Murray Stahl / Steven Bregman"
+    bucket: fundamental_value
+    aum_tier: "mid"            # ~$5-7B
+    cik: null
+    cik_status: verify
+    filing_flags: []
+    notes: >
+      Idiosyncratic deep value; inflation-sensitive theses (royalty companies,
+      exchanges); very low turnover; less-covered analytically — a key reason
+      for inclusion.
+
+  - name: "Gotham Asset Management"
+    manager: "Joel Greenblatt"
+    bucket: fundamental_value
+    aum_tier: "mid"            # ~$3-5B
+    cik: null
+    cik_status: verify
+    filing_flags: []
+    notes: >
+      "Magic Formula" quantitative value; systematic but value-anchored; useful
+      bridge between the value and quant buckets for factor analysis.
+
+  - name: "Southeastern Asset Management"
+    manager: "Mason Hawkins / Staley Cates"
+    bucket: fundamental_value
+    aum_tier: "mid"            # ~$4-6B
+    cik: null
+    cik_status: verify
+    filing_flags: []
+    notes: >
+      Deep value, long-only orientation (Longleaf Partners flagship); very long
+      track record (since 1975); concentrated; different enough from activist names
+      to add analytical diversity.
+
+  - name: "SPO Advisory Corp"
+    manager: "John Scully Jr."
+    bucket: fundamental_value
+    aum_tier: "large"          # ~$10-15B
+    cik: null
+    cik_status: verify
+    filing_flags: []
+    notes: >
+      Extremely concentrated value; large long-only book; rarely discussed in
+      financial media despite AUM — exactly the kind of less-covered fund that
+      rewards inclusion.
+
+  # ──────────────────────────────────────────────
+  # BUCKET 3: QUANT / SYSTEMATIC
+  # ──────────────────────────────────────────────
+  # Note on 13F informativeness: captures the equity long book only — not shorts,
+  # futures, or model logic. Useful for: identifying stocks passing systematic
+  # screens, tracking factor exposure evolution, and measuring quant crowding.
+  # Pure CTAs (futures-dominant) are excluded as structurally hollow for 13F.
+
+  - name: "Renaissance Technologies"
+    manager: "Peter Brown"
+    bucket: quant_systematic
+    aum_tier: "very_large"     # Institutional funds (RIEF/RIDA) ~$30-40B; total firm $130B+
+    cik: "1037389"
+    cik_status: confirmed
+    filing_flags: []
+    notes: >
+      Gold standard of quant; RIEF and RIDA (institutional funds, not Medallion)
+      file 13F. Highly diversified long book; useful for identifying quant-consensus
+      names and crowding dynamics.
+
+  - name: "Two Sigma Investments"
+    manager: "John Overdeck / David Siegel"
+    bucket: quant_systematic
+    aum_tier: "very_large"     # ~$60B+
+    cik: "1179392"
+    cik_status: confirmed
+    filing_flags: []
+    notes: >
+      Massive systematic equity L/S; 13F large enough to identify crowded quant
+      longs; good crowding indicator when crossed with Renaissance and DE Shaw.
+
+  - name: "D.E. Shaw & Co."
+    manager: "David Shaw / Anne Dinning"
+    bucket: quant_systematic
+    aum_tier: "very_large"     # ~$60B+
+    cik: null
+    cik_status: verify
+    filing_flags: []
+    notes: >
+      Pioneering systematic firm; may file under multiple legal entities — confirm
+      which entity covers the primary equity book before ingesting. Good pair with
+      Two Sigma for quant-consensus analysis.
+
+  - name: "AQR Capital Management"
+    manager: "Cliff Asness"
+    bucket: quant_systematic
+    aum_tier: "very_large"     # ~$100B+
+    cik: "1112520"
+    cik_status: confirmed
+    filing_flags: []
+    notes: >
+      Leading public-facing quant/factor shop; 13F directly reflects factor tilts
+      (value, momentum, quality); ideal benchmark for factor exposure analysis in
+      Module 3.
+
+  - name: "Acadian Asset Management"
+    manager: "Ryan Taliaferro"
+    bucket: quant_systematic
+    aum_tier: "very_large"     # ~$100B AUM, mostly separate accounts
+    cik: null
+    cik_status: verify
+    filing_flags: []
+    notes: >
+      Pure systematic equity; academic factor-based; 13F reflects systematic
+      exposures across global equities; less well-known than AQR — adds
+      analytical contrast.
+
+  - name: "PDT Partners"
+    manager: "Peter Muller"
+    bucket: quant_systematic
+    aum_tier: "mid"            # ~$5-10B
+    cik: null
+    cik_status: verify
+    filing_flags:
+      - verify_filing_completeness
+    filing_completeness_note: >
+      PDT has been known to structure trading entities in ways that minimize
+      public 13F disclosure — multiple sub-entities may each fall below thresholds
+      or file separately with limited information. Verify that identified CIK
+      captures the primary equity book before treating 13F as representative.
+    notes: >
+      Statistical arbitrage / quant equity; Morgan Stanley spinout; smaller and
+      less-covered than the mega quants — adds contrast to the bucket. Filing
+      completeness must be confirmed before inclusion in pipeline.
+
+  # ──────────────────────────────────────────────
+  # BUCKET 4: SECTOR SPECIALISTS
+  # ──────────────────────────────────────────────
+
+  # — Technology —
+
+  - name: "Altimeter Capital Management"
+    manager: "Brad Gerstner"
+    bucket: sector_specialist
+    sector: technology
+    aum_tier: "large"          # ~$15-20B
+    cik: null
+    cik_status: verify
+    filing_flags: []
+    notes: >
+      Pure tech/software focus; engaged shareholder; concentrated public equity;
+      13F is the primary window into their thesis. Wrote the widely-read Meta
+      open letter — positions are closely watched.
+
+  - name: "Dragoneer Investment Group"
+    manager: "Marc Stad"
+    bucket: sector_specialist
+    sector: technology
+    aum_tier: "large"          # ~$15B+
+    cik: null
+    cik_status: verify
+    filing_flags: []
+    notes: >
+      Long-duration growth tech and internet; public/private crossover; substantial
+      public book; less covered than Coatue/Tiger — less-covered name.
+
+  - name: "Greenoaks Capital Partners"
+    manager: "Neil Mehta"
+    bucket: sector_specialist
+    sector: technology
+    aum_tier: "large"          # ~$10B+
+    cik: null
+    cik_status: verify
+    filing_flags: []
+    notes: >
+      High-conviction tech; Coatue lineage; relatively newer fund with less
+      analytical coverage — the key reason for inclusion as a less-covered name.
+
+  # — Healthcare / Biotech —
+
+  - name: "Baker Brothers Advisors"
+    manager: "Felix Baker / Julian Baker"
+    bucket: sector_specialist
+    sector: healthcare_biotech
+    aum_tier: "very_large"     # ~$35-40B
+    cik: "1263508"
+    cik_status: verify
+    filing_flags: []
+    notes: >
+      The dominant biotech-specialist hedge fund; enormous positions in
+      development-stage biotech; 13F is the primary institutional data source
+      for biotech smart-money tracking. Positions move individual stock prices.
+
+  - name: "Perceptive Advisors"
+    manager: "Joseph Edelman"
+    bucket: sector_specialist
+    sector: healthcare_biotech
+    aum_tier: "large"          # ~$7-10B
+    cik: null
+    cik_status: verify
+    filing_flags: []
+    notes: >
+      Biotech/life sciences specialist; smaller-cap biotech focus vs. Baker Brothers;
+      quarterly 13F changes track clinical-stage conviction shifts well.
+
+  - name: "OrbiMed Advisors"
+    manager: "Samuel Isaly / W. Carter Neild"
+    bucket: sector_specialist
+    sector: healthcare_biotech
+    aum_tier: "large"          # ~$15-20B
+    cik: null
+    cik_status: verify
+    filing_flags: []
+    notes: >
+      Largest dedicated healthcare hedge fund globally; covers pharma, biotech,
+      medtech across market caps and geographies.
+
+  - name: "RA Capital Management"
+    manager: "Peter Kolchinsky"
+    bucket: sector_specialist
+    sector: healthcare_biotech
+    aum_tier: "large"          # ~$10-15B
+    cik: null
+    cik_status: verify
+    filing_flags: []
+    notes: >
+      Deep scientific diligence biotech specialist; public and private; 13F
+      captures meaningful public book; a tier below Baker Brothers in coverage
+      volume — good for analytical triangulation.
+
+  # — Energy —
+
+  - name: "Kayne Anderson Capital Advisors"
+    manager: "James Kayne / Robert Sinnott"
+    bucket: sector_specialist
+    sector: energy
+    aum_tier: "large"          # ~$10-15B
+    cik: null
+    cik_status: verify
+    filing_flags: []
+    notes: >
+      Energy infrastructure and midstream specialist; MLP-heavy; 13F captures
+      equity and MLP holdings that most generalist funds won't hold — unique
+      exposure profile.
+
+  - name: "SailingStone Capital Partners"
+    manager: "Mac Sykes / Kenneth Settles Jr."
+    bucket: sector_specialist
+    sector: energy
+    aum_tier: "mid"            # ~$3-5B
+    cik: null
+    cik_status: verify
+    filing_flags: []
+    notes: >
+      Natural resources/energy specialist; patient capital, long-horizon;
+      very low coverage in financial media — the primary reason for inclusion
+      as a less-covered name.
+
+  # — Financials —
+
+  - name: "Corsair Capital Management"
+    manager: "Jay Petschek / Steve Major"
+    bucket: sector_specialist
+    sector: financials
+    aum_tier: "small_mid"      # ~$2-3B
+    cik: null
+    cik_status: verify
+    filing_flags: []
+    notes: >
+      Pure financials specialist — banks, insurance, specialty finance;
+      concentrated; essentially uncovered by sell-side; 13F gives rare insight
+      into dedicated financials specialist positioning.
+
+  - name: "Brahman Capital Corp"
+    manager: "Peter Roth / Rob Sobel"
+    bucket: sector_specialist
+    sector: financials
+    aum_tier: "mid"            # ~$3-5B
+    cik: null
+    cik_status: verify
+    filing_flags: []
+    notes: >
+      Value-oriented with strong financial services tilt; long-horizon concentrated
+      book; relatively obscure outside the hedge fund community — less-covered name.
+
+  - name: "Pzena Investment Management"
+    manager: "Richard Pzena"
+    bucket: sector_specialist
+    sector: financials
+    aum_tier: "large"          # ~$50B+ across all accounts (SMA + mutual funds + hedge)
+    cik: null
+    cik_status: verify
+    filing_flags: []
+    notes: >
+      Deep value manager with heavy and well-documented financials exposure;
+      files 13F as an institutional manager; holdings are detailed and consistent
+      across quarters — good anchor for financials sector baseline. Primarily
+      long-only; 13F is a complete picture of the equity book.
+
+  # ──────────────────────────────────────────────
+  # CONDITIONAL FUNDS
+  # ──────────────────────────────────────────────
+
+  - name: "Situational Awareness LP"
+    manager: "Leopold Aschenbrenner"
+    bucket: sector_specialist
+    sector: technology
+    aum_tier: "unknown"
+    cik: null
+    cik_status: verify
+    filing_flags:
+      - conditional_threshold
+    conditional: true
+    conditional_note: >
+      Include only if EDGAR search confirms the fund has crossed the $100M
+      Section 13(f) securities threshold and has filed at least one 13F-HR.
+      Search EDGAR full-text search for "Situational Awareness" under form type
+      13F-HR. Fund launched in 2024; as of config creation date the AUM and
+      filing status are unconfirmed. Strategy is AI/tech/geopolitical macro
+      — 13F would capture the long equity component only.
+    notes: >
+      Leopold Aschenbrenner (former OpenAI); AI-era long/short with geopolitical
+      macro overlay. Analytically interesting regardless of filing status;
+      activate in pipeline once threshold confirmed.
