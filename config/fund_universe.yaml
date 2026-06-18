@@ -28,7 +28,7 @@ funds:
     manager: "Andreas Halvorsen"
     bucket: long_short_equity
     aum_tier: "large"          # ~$30B+
-    cik: "1166928"
+    cik: "1103804"
     cik_status: confirmed
     filing_flags: []
     notes: >
@@ -50,7 +50,7 @@ funds:
     manager: "Philippe Laffont"
     bucket: long_short_equity
     aum_tier: "large"          # ~$20B+
-    cik: "1108134"
+    cik: "1135730"
     cik_status: confirmed
     filing_flags: []
     notes: >
@@ -61,7 +61,7 @@ funds:
     manager: "Chase Coleman"
     bucket: long_short_equity
     aum_tier: "large"          # ~$20-25B
-    cik: "1166126"
+    cik: "1167483"
     cik_status: confirmed
     filing_flags: []
     notes: >
@@ -72,7 +72,7 @@ funds:
     manager: "Lee Ainslie"
     bucket: long_short_equity
     aum_tier: "mid_large"      # ~$8-12B
-    cik: "893641"
+    cik: "934639"
     cik_status: confirmed
     filing_flags: []
     notes: >
@@ -83,8 +83,8 @@ funds:
     manager: "Dan Sundheim"
     bucket: long_short_equity
     aum_tier: "large"          # ~$15-20B
-    cik: "1769120"
-    cik_status: verify
+    cik: "1747057"
+    cik_status: confirmed
     filing_flags: []
     notes: >
       Viking spinout; high-quality fundamental L/S with public/private mix;
@@ -94,8 +94,8 @@ funds:
     manager: "Larry Robbins"
     bucket: long_short_equity
     aum_tier: "mid"            # ~$5-8B
-    cik: "1216595"
-    cik_status: verify
+    cik: "1138995"
+    cik_status: confirmed
     filing_flags: []
     notes: >
       Healthcare-heavy L/S with activist overlay; concentrated thesis-driven positions;
@@ -105,8 +105,8 @@ funds:
     manager: "Alex Sacerdote"
     bucket: long_short_equity
     aum_tier: "mid_large"      # ~$8-12B
-    cik: "1504776"
-    cik_status: verify
+    cik: "1387322"
+    cik_status: confirmed
     filing_flags: []
     notes: >
       Tech/software growth L/S; former Fidelity; highly concentrated positions
@@ -116,8 +116,8 @@ funds:
     manager: "Doug Silverman"
     bucket: long_short_equity
     aum_tier: "mid"            # ~$5-8B
-    cik: "1504444"
-    cik_status: verify
+    cik: "1443689"
+    cik_status: confirmed
     filing_flags: []
     notes: >
       Multi-sector L/S; strong risk management culture; less covered than Tiger Cubs —
@@ -127,8 +127,8 @@ funds:
     manager: "Glen Kacher"
     bucket: long_short_equity
     aum_tier: "mid"            # ~$3-5B
-    cik: null
-    cik_status: verify
+    cik: "1569049"
+    cik_status: confirmed
     filing_flags: []
     notes: >
       Tech-focused L/S; former Tiger Cub; concentrated long book; smaller and
@@ -164,8 +164,8 @@ funds:
     manager: "Seth Klarman"
     bucket: fundamental_value
     aum_tier: "large"          # ~$27-30B
-    cik: "1061219"
-    cik_status: verify
+    cik: "1061768"
+    cik_status: confirmed
     filing_flags:
       - verify_filing_completeness
     filing_completeness_note: >
@@ -182,8 +182,8 @@ funds:
     manager: "Mason Morfit"
     bucket: fundamental_value
     aum_tier: "mid"            # ~$5-8B
-    cik: "1418819"
-    cik_status: verify
+    cik: "1418814"
+    cik_status: confirmed
     filing_flags: []
     notes: >
       Pure activist value; takes board seats; very concentrated; long holding periods
@@ -193,8 +193,8 @@ funds:
     manager: "Jeff Smith"
     bucket: fundamental_value
     aum_tier: "mid"            # ~$5-8B
-    cik: null
-    cik_status: verify
+    cik: "1517137"
+    cik_status: confirmed
     filing_flags: []
     notes: >
       Activist value with operational improvement focus; concentrated disclosed
@@ -205,7 +205,7 @@ funds:
     bucket: fundamental_value
     aum_tier: "small_mid"      # ~$1-2B, contracted post-drawdown
     cik: "1079114"
-    cik_status: verify
+    cik_status: confirmed
     filing_flags: []
     notes: >
       Classic value L/S; AUM has contracted but historically important benchmark;
@@ -216,8 +216,8 @@ funds:
     manager: "Murray Stahl / Steven Bregman"
     bucket: fundamental_value
     aum_tier: "mid"            # ~$5-7B
-    cik: null
-    cik_status: verify
+    cik: "1519418"
+    cik_status: confirmed
     filing_flags: []
     notes: >
       Idiosyncratic deep value; inflation-sensitive theses (royalty companies,
@@ -228,8 +228,8 @@ funds:
     manager: "Joel Greenblatt"
     bucket: fundamental_value
     aum_tier: "mid"            # ~$3-5B
-    cik: null
-    cik_status: verify
+    cik: "1279148"
+    cik_status: confirmed
     filing_flags: []
     notes: >
       "Magic Formula" quantitative value; systematic but value-anchored; useful
@@ -239,8 +239,8 @@ funds:
     manager: "Mason Hawkins / Staley Cates"
     bucket: fundamental_value
     aum_tier: "mid"            # ~$4-6B
-    cik: null
-    cik_status: verify
+    cik: "807985"
+    cik_status: confirmed
     filing_flags: []
     notes: >
       Deep value, long-only orientation (Longleaf Partners flagship); very long
@@ -251,8 +251,8 @@ funds:
     manager: "John Scully Jr."
     bucket: fundamental_value
     aum_tier: "large"          # ~$10-15B
-    cik: null
-    cik_status: verify
+    cik: "919468"
+    cik_status: confirmed
     filing_flags: []
     notes: >
       Extremely concentrated value; large long-only book; rarely discussed in
@@ -294,8 +294,8 @@ funds:
     manager: "David Shaw / Anne Dinning"
     bucket: quant_systematic
     aum_tier: "very_large"     # ~$60B+
-    cik: null
-    cik_status: verify
+    cik: "1009207"
+    cik_status: confirmed
     filing_flags: []
     notes: >
       Pioneering systematic firm; may file under multiple legal entities — confirm
@@ -306,7 +306,7 @@ funds:
     manager: "Cliff Asness"
     bucket: quant_systematic
     aum_tier: "very_large"     # ~$100B+
-    cik: "1112520"
+    cik: "1167557"
     cik_status: confirmed
     filing_flags: []
     notes: >
@@ -318,8 +318,8 @@ funds:
     manager: "Ryan Taliaferro"
     bucket: quant_systematic
     aum_tier: "very_large"     # ~$100B AUM, mostly separate accounts
-    cik: null
-    cik_status: verify
+    cik: "916542"
+    cik_status: confirmed
     filing_flags: []
     notes: >
       Pure systematic equity; academic factor-based; 13F reflects systematic
@@ -330,8 +330,8 @@ funds:
     manager: "Peter Muller"
     bucket: quant_systematic
     aum_tier: "mid"            # ~$5-10B
-    cik: null
-    cik_status: verify
+    cik: "1564702"
+    cik_status: confirmed
     filing_flags:
       - verify_filing_completeness
     filing_completeness_note: >
@@ -355,8 +355,8 @@ funds:
     bucket: sector_specialist
     sector: technology
     aum_tier: "large"          # ~$15-20B
-    cik: null
-    cik_status: verify
+    cik: "1541617"
+    cik_status: confirmed
     filing_flags: []
     notes: >
       Pure tech/software focus; engaged shareholder; concentrated public equity;
@@ -368,8 +368,8 @@ funds:
     bucket: sector_specialist
     sector: technology
     aum_tier: "large"          # ~$15B+
-    cik: null
-    cik_status: verify
+    cik: "1602189"
+    cik_status: confirmed
     filing_flags: []
     notes: >
       Long-duration growth tech and internet; public/private crossover; substantial
@@ -380,8 +380,8 @@ funds:
     bucket: sector_specialist
     sector: technology
     aum_tier: "large"          # ~$10B+
-    cik: null
-    cik_status: verify
+    cik: "1840735"
+    cik_status: confirmed
     filing_flags: []
     notes: >
       High-conviction tech; Coatue lineage; relatively newer fund with less
@@ -395,7 +395,7 @@ funds:
     sector: healthcare_biotech
     aum_tier: "very_large"     # ~$35-40B
     cik: "1263508"
-    cik_status: verify
+    cik_status: confirmed
     filing_flags: []
     notes: >
       The dominant biotech-specialist hedge fund; enormous positions in
@@ -408,7 +408,7 @@ funds:
     sector: healthcare_biotech
     aum_tier: "large"          # ~$7-10B
     cik: null
-    cik_status: verify
+    cik_status: not_found
     filing_flags: []
     notes: >
       Biotech/life sciences specialist; smaller-cap biotech focus vs. Baker Brothers;
@@ -419,8 +419,8 @@ funds:
     bucket: sector_specialist
     sector: healthcare_biotech
     aum_tier: "large"          # ~$15-20B
-    cik: null
-    cik_status: verify
+    cik: "1055951"
+    cik_status: confirmed
     filing_flags: []
     notes: >
       Largest dedicated healthcare hedge fund globally; covers pharma, biotech,
@@ -431,8 +431,8 @@ funds:
     bucket: sector_specialist
     sector: healthcare_biotech
     aum_tier: "large"          # ~$10-15B
-    cik: null
-    cik_status: verify
+    cik: "1346824"
+    cik_status: confirmed
     filing_flags: []
     notes: >
       Deep scientific diligence biotech specialist; public and private; 13F
@@ -446,8 +446,8 @@ funds:
     bucket: sector_specialist
     sector: energy
     aum_tier: "large"          # ~$10-15B
-    cik: null
-    cik_status: verify
+    cik: "949615"
+    cik_status: confirmed
     filing_flags: []
     notes: >
       Energy infrastructure and midstream specialist; MLP-heavy; 13F captures
@@ -459,8 +459,8 @@ funds:
     bucket: sector_specialist
     sector: energy
     aum_tier: "mid"            # ~$3-5B
-    cik: null
-    cik_status: verify
+    cik: "1608904"
+    cik_status: confirmed
     filing_flags: []
     notes: >
       Natural resources/energy specialist; patient capital, long-horizon;
@@ -474,8 +474,8 @@ funds:
     bucket: sector_specialist
     sector: financials
     aum_tier: "small_mid"      # ~$2-3B
-    cik: null
-    cik_status: verify
+    cik: "1276470"
+    cik_status: confirmed
     filing_flags: []
     notes: >
       Pure financials specialist — banks, insurance, specialty finance;
@@ -487,8 +487,8 @@ funds:
     bucket: sector_specialist
     sector: financials
     aum_tier: "mid"            # ~$3-5B
-    cik: null
-    cik_status: verify
+    cik: "1014894"
+    cik_status: confirmed
     filing_flags: []
     notes: >
       Value-oriented with strong financial services tilt; long-horizon concentrated
@@ -499,8 +499,8 @@ funds:
     bucket: sector_specialist
     sector: financials
     aum_tier: "large"          # ~$50B+ across all accounts (SMA + mutual funds + hedge)
-    cik: null
-    cik_status: verify
+    cik: "1027796"
+    cik_status: confirmed
     filing_flags: []
     notes: >
       Deep value manager with heavy and well-documented financials exposure;
@@ -517,8 +517,8 @@ funds:
     bucket: sector_specialist
     sector: technology
     aum_tier: "unknown"
-    cik: null
-    cik_status: verify
+    cik: "2045724"
+    cik_status: confirmed
     filing_flags:
       - conditional_threshold
     conditional: true
