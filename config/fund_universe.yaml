@@ -409,10 +409,21 @@ funds:
     aum_tier: "large"          # ~$7-10B
     cik: null
     cik_status: not_found
-    filing_flags: []
+    filing_flags:
+      - excluded_no_edgar_cik
+    not_found_note: >
+      Exhaustive EDGAR company-name search (2026-06-18) found no entity matching
+      "Perceptive Advisors" that files 13F-HR. EDGAR contains dozens of
+      Perceptive-branded SPVs and credit vehicles but no registered investment
+      advisor entity under that name. Possible explanations: (1) the advisor files
+      under an obscure legal name not containing "Perceptive"; (2) US-listed
+      equity positions are below the $100M Section 13(f) threshold. Not worth
+      further automated lookup — exclude from pipeline. Healthcare bucket proceeds
+      with 3 confirmed funds: OrbiMed, Baker Brothers, RA Capital.
     notes: >
       Biotech/life sciences specialist; smaller-cap biotech focus vs. Baker Brothers;
       quarterly 13F changes track clinical-stage conviction shifts well.
+      Excluded from pipeline — no verifiable 13F CIK found on EDGAR.
 
   - name: "OrbiMed Advisors"
     manager: "Samuel Isaly / W. Carter Neild"
