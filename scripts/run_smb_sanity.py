@@ -1,5 +1,5 @@
 """
-Sanity checks for the SMB factor and 2-factor loadings.
+Sanity checks for the SMB factor and Fama-French 3-factor loadings.
 
 Run from the project root with the venv active:
     python scripts/run_smb_sanity.py
@@ -11,7 +11,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import pandas as pd
 from factor_engine.factors.market import build_market_factor
-from factor_engine.factors.smb import build_smb_factor, compute_smb_loading
+from factor_engine.factors.smb import build_smb_factor
+from factor_engine.factors.hml import build_hml_factor, compute_factor_loadings
 
 TICKERS = ["AAPL", "MSFT", "JPM", "XOM", "GLD"]
 START = "2020-01-01"
@@ -23,12 +24,12 @@ def main():
 
     market_factor = build_market_factor(START, END)
     smb_factor    = build_smb_factor(START, END)
+    hml_factor    = build_hml_factor(START, END)
 
-    # ── SMB factor descriptives ────────────────────────────────────────────
     smb = smb_factor["smb"]
     mkt = market_factor["market_excess"]
 
-    corr_smb_mkt = smb.corr(mkt)
+    corr_smb_mkt   = smb.corr(mkt)
     mean_daily_smb = smb.mean()
     std_daily_smb  = smb.std()
     mean_daily_mkt = mkt.mean()
@@ -47,36 +48,39 @@ def main():
     print(f"\n  Correlation(SMB, Mkt-RF): {corr_smb_mkt:+.4f}")
     print(f"  [Target: |r| < 0.20 — SMB should be largely orthogonal to market]\n")
 
-    # ── 2-factor loadings ──────────────────────────────────────────────────
+    # ── 3-factor loadings ──────────────────────────────────────────────────
     results = []
     for ticker in TICKERS:
-        print(f"  Computing 2-factor loading for {ticker}...")
-        r = compute_smb_loading(ticker, START, END,
-                                market_factor=market_factor,
-                                smb_factor=smb_factor)
+        print(f"  Computing 3-factor loading for {ticker}...")
+        r = compute_factor_loadings(
+            ticker, START, END,
+            market_factor=market_factor,
+            smb_factor=smb_factor,
+            hml_factor=hml_factor,
+        )
         results.append(r)
 
     df = (
         pd.DataFrame(results)
         .set_index("ticker")
-        [["beta_market", "beta_smb", "t_stat_smb", "p_value_smb",
+        [["beta_market", "beta_smb", "beta_hml", "t_stat_smb", "p_value_smb",
           "alpha_annualised", "r_squared", "n_obs"]]
     )
 
-    print("\n=== 2-Factor (Mkt-RF + SMB) Loadings ===")
+    print("\n=== Fama-French 3-Factor Loadings (SMB focus) ===")
     print(df.to_string(float_format=lambda x: f"{x:+.4f}"))
 
     print("\nInterpretation:")
     print("  beta_market > 1   → more volatile than the market")
     print("  beta_smb < 0      → large-cap tilt  (stock moves like 'big' stocks)")
     print("  beta_smb > 0      → small-cap tilt  (stock moves like 'small' stocks)")
-    print("\nKey checks:")
+    print("\nKey checks (SMB loading):")
 
     for r in results:
         t = r["ticker"]
         b = r["beta_smb"]
         p = r["p_value_smb"]
-        sig = "**significant**" if p < 0.05 else "not significant"
+        sig = "significant" if p < 0.05 else "not significant"
         direction = "negative ✓" if b < 0 else "positive"
         if t in ("AAPL", "MSFT"):
             print(f"  {t}: β_smb = {b:+.4f}  ({direction})  p={p:.4f}  [{sig}]"
