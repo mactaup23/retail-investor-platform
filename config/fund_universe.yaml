@@ -28,7 +28,7 @@ funds:
     manager: "Andreas Halvorsen"
     bucket: long_short_equity
     aum_tier: "large"          # ~$30B+
-    cik: "1103804"
+    cik: "1103804"             # verified: CIK 1166928 is West Bancorporation Inc (wrong entity)
     cik_status: confirmed
     filing_flags: []
     notes: >
