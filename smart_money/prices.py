@@ -108,25 +108,37 @@ def _load_from_cache(
     )
 
 
+_UPSERT_SQL = (
+    "INSERT OR REPLACE INTO price_cache "
+    "(security_id, date, close, adj_close, source, fetched_at) "
+    "VALUES (?, ?, ?, ?, ?, ?)"
+)
+
+
+def _date_str(d) -> str:
+    """Normalise a date-like value to ISO 'YYYY-MM-DD' string."""
+    if hasattr(d, "strftime"):
+        return d.strftime("%Y-%m-%d")
+    return str(d)[:10]
+
+
 def _upsert_prices(security: Security, df: pd.DataFrame) -> None:
     """Bulk upsert a ticker's price DataFrame into PriceCache."""
-    now = datetime.datetime.utcnow()
+    df = df[~df.index.duplicated(keep="last")]
+    sid = security.get_id()
+    now_str = datetime.datetime.utcnow().isoformat()
     rows = [
-        {
-            "security":   security,
-            "date":       row_date,
-            "close":      float(row["close"]),
-            "adj_close":  float(row["adj_close"]),
-            "source":     "yfinance",
-            "fetched_at": now,
-        }
+        (sid, _date_str(row_date), float(row["close"]), float(row["adj_close"]), "yfinance", now_str)
         for row_date, row in df.iterrows()
         if pd.notna(row["close"]) and pd.notna(row["adj_close"])
     ]
     if not rows:
         return
-    for i in range(0, len(rows), _UPSERT_CHUNK):
-        PriceCache.insert_many(rows[i : i + _UPSERT_CHUNK]).on_conflict_replace().execute()
+    db = PriceCache._meta.database
+    conn = db.connection()
+    with db.atomic():
+        for i in range(0, len(rows), _UPSERT_CHUNK):
+            conn.executemany(_UPSERT_SQL, rows[i : i + _UPSERT_CHUNK])
 
 
 # ---------------------------------------------------------------------------
