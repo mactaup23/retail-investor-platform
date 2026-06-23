@@ -119,15 +119,29 @@ _TYPE_SCORE: dict[str, int] = {
     "Warrant":            1,
     "Right":              1,
 }
-# US=NYSE, UN=NYSE ARCA, UW=NASDAQ, UR=OTC Markets
-_EXCH_SCORE: dict[str, int] = {"US": 3, "UN": 3, "UW": 3, "UR": 2}
+# Primary US venues and their scores
+# US=NYSE, UN=NYSE ARCA, UW=NASDAQ Global Select, UQ=NASDAQ Capital Market,
+# UR=OTC Markets, UP=Pink Sheets, UA=NYSE American, UC=FINRA OTC, UD=FINRA ADF
+_EXCH_SCORE: dict[str, int] = {
+    "US": 3, "UN": 3, "UW": 3, "UQ": 3,
+    "UR": 2, "UA": 2, "UD": 2,
+    "UP": 1, "UC": 1,
+}
+# Non-US exchange listings (Xetra, LSE, Euronext, etc.) are strongly penalised
+# so the US composite always wins when a dual-listed security has both US and
+# foreign candidates returned by OpenFIGI.
+_US_EXCHANGES = frozenset(_EXCH_SCORE)
+_NON_US_PENALTY = -20
 
 
 def _score(candidate: dict) -> int:
     s = 0
     s += _SECTOR_SCORE.get(candidate.get("marketSector", ""), 0)
     s += _TYPE_SCORE.get(candidate.get("securityType", ""), 0)
-    s += _EXCH_SCORE.get(candidate.get("exchCode", ""), 0)
+    exch = candidate.get("exchCode", "")
+    s += _EXCH_SCORE.get(exch, 0)
+    if exch and exch not in _US_EXCHANGES:
+        s += _NON_US_PENALTY
     return s
 
 

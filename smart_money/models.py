@@ -31,6 +31,7 @@ from peewee import (
     IntegerField,
     Model,
     SqliteDatabase,
+    TextField,
 )
 
 DB_PATH = Path(__file__).parent.parent / "data" / "module3.db"
@@ -223,10 +224,51 @@ class PriceCache(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# FundSkillResult
+# ---------------------------------------------------------------------------
+
+class FundSkillResult(BaseModel):
+    """
+    FF3 skill decomposition scores written by the pipeline (Phase 5).
+
+    One row per fund; INSERT OR REPLACE semantics mean each pipeline run
+    overwrites the previous score.  Module 4 reads this table directly
+    for signal weighting rather than recomputing scores on every request.
+
+    quarters_used is JSON-encoded, e.g. '["2023Q1","2023Q2","2024Q1"]'.
+    """
+
+    fund             = ForeignKeyField(Fund, backref="skill_result", unique=True)
+    scored_at        = DateTimeField()
+    n_quarters       = IntegerField()
+    is_reliable      = BooleanField()
+    confidence_label = CharField()
+    quarters_used    = TextField()          # JSON list[str]
+    alpha_quarterly  = FloatField()
+    alpha_annualized = FloatField()
+    alpha_t_stat     = FloatField()
+    alpha_p_value    = FloatField()
+    beta_market      = FloatField()
+    beta_smb         = FloatField()
+    beta_hml         = FloatField()
+    t_stat_market    = FloatField()
+    t_stat_smb       = FloatField()
+    t_stat_hml       = FloatField()
+    r_squared        = FloatField()
+    avg_excess_return_q = FloatField()
+    return_from_market  = FloatField()
+    return_from_smb     = FloatField()
+    return_from_hml     = FloatField()
+
+    class Meta:
+        table_name = "fund_skill_result"
+
+
+# ---------------------------------------------------------------------------
 # Registry and init
 # ---------------------------------------------------------------------------
 
-TABLES = [Fund, Filing, Holding, Security, PriceCache]
+TABLES = [Fund, Filing, Holding, Security, PriceCache, FundSkillResult]
 
 QUANT_PRICE_GATE = Holding.QUANT_PRICE_GATE  # re-export for callers
 
