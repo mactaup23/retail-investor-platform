@@ -348,10 +348,56 @@ class NLPCache(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# FinalSignal
+# ---------------------------------------------------------------------------
+
+class FinalSignal(BaseModel):
+    """
+    Combined convergence + NLP signal row written by signal.combine().
+
+    One row per (cusip, period).  INSERT OR REPLACE semantics via replace_many.
+    Prior rows are read by the next quarter's run to compute delta and status.
+
+    status values: STRENGTHENING | HOLDING | WEAKENING | EXIT SIGNAL
+    signal_drivers is a plain-English string built from fund_moves_json and
+    NLP reasoning — surfaced as a dashboard tooltip, no extra API calls.
+    """
+
+    cusip                         = CharField()
+    ticker                        = CharField(null=True)
+    issuer_name                   = CharField()
+    period                        = DateField()
+    convergence_score             = FloatField()
+    nlp_composite_score           = FloatField(null=True)
+    final_score                   = FloatField()
+    nlp_available                 = BooleanField(default=False)
+    contradicted                  = BooleanField(default=False)
+    status                        = CharField()
+    signal_drivers                = TextField()
+    n_funds_bullish               = IntegerField()
+    n_funds_bearish               = IntegerField()
+    convergence_trend             = CharField(null=True)
+    sector                        = CharField(null=True)
+    avg_position_pct_of_portfolio = FloatField(null=True)
+    computed_at                   = DateTimeField(default=datetime.datetime.utcnow)
+
+    @property
+    def display_name(self) -> str:
+        """Ticker symbol when resolved; issuer_name otherwise. Use for all UI display."""
+        return self.ticker if self.ticker else self.issuer_name
+
+    class Meta:
+        table_name = "final_signal"
+        indexes = (
+            (("cusip", "period"), True),   # one row per CUSIP per quarter
+        )
+
+
+# ---------------------------------------------------------------------------
 # Registry and init
 # ---------------------------------------------------------------------------
 
-TABLES = [Fund, Filing, Holding, Security, PriceCache, FundSkillResult, ConvergenceScore, NLPCache]
+TABLES = [Fund, Filing, Holding, Security, PriceCache, FundSkillResult, ConvergenceScore, NLPCache, FinalSignal]
 
 QUANT_PRICE_GATE = Holding.QUANT_PRICE_GATE  # re-export for callers
 
