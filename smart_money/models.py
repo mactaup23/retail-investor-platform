@@ -348,6 +348,54 @@ class NLPCache(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# TaxLot
+# ---------------------------------------------------------------------------
+
+class TaxLot(BaseModel):
+    """
+    One row per cost-basis lot ingested from a brokerage CSV export.
+
+    All derived fields (unrealized_gl, holding_days, is_long_term, etc.) are
+    computed at ingest time and stored so the dashboard can query without
+    recomputing.  Uploading a new CSV for the same account_id replaces all
+    existing lots for that account inside a single transaction.
+
+    lot_id is a stable synthetic key: md5(account_id:ticker:date:qty:cost)[:12]
+    so re-ingesting the same CSV produces the same lot_ids (idempotent).
+    """
+
+    lot_id               = CharField(unique=True)
+    account_id           = CharField(default="default")
+    brokerage            = CharField(null=True)   # fidelity|schwab|ibkr|generic
+    ticker               = CharField()
+    description          = CharField(null=True)
+    quantity             = FloatField()
+    cost_basis_per_share = FloatField()
+    total_cost_basis     = FloatField()           # quantity × cost_basis_per_share
+    acquisition_date     = DateField()
+
+    # Computed at ingest
+    valuation_date       = DateField()
+    current_price        = FloatField(null=True)
+    current_value        = FloatField(null=True)  # quantity × current_price
+    unrealized_gl        = FloatField(null=True)  # current_value − total_cost_basis
+    unrealized_gl_pct    = FloatField(null=True)
+    holding_days         = IntegerField()
+    is_long_term         = BooleanField()         # holding_days > 365
+    days_to_lt           = IntegerField()         # 0 when already LT
+    near_lt              = BooleanField()         # 0 < days_to_lt ≤ 30
+    wash_sale_risk       = BooleanField(default=False)
+
+    ingested_at          = DateTimeField(default=datetime.datetime.utcnow)
+
+    class Meta:
+        table_name = "tax_lot"
+        indexes = (
+            (("account_id", "ticker"), False),
+        )
+
+
+# ---------------------------------------------------------------------------
 # Watchlist
 # ---------------------------------------------------------------------------
 
@@ -432,7 +480,7 @@ class FinalSignal(BaseModel):
 # Registry and init
 # ---------------------------------------------------------------------------
 
-TABLES = [Fund, Filing, Holding, Security, PriceCache, FundSkillResult, ConvergenceScore, NLPCache, FinalSignal, Watchlist]
+TABLES = [Fund, Filing, Holding, Security, PriceCache, FundSkillResult, ConvergenceScore, NLPCache, FinalSignal, TaxLot, Watchlist]
 
 QUANT_PRICE_GATE = Holding.QUANT_PRICE_GATE  # re-export for callers
 
