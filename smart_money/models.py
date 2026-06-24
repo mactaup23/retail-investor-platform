@@ -283,5 +283,7 @@ def init_db(path: Path | None = None) -> SqliteDatabase:
     target = path if path is not None else DB_PATH
     db.init(str(target))
     db.connect(reuse_if_open=True)
+    db.execute_sql("PRAGMA journal_mode=WAL")
+    db.execute_sql("PRAGMA foreign_keys=ON")
     db.create_tables(TABLES, safe=True)
     return db
