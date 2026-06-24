@@ -175,6 +175,7 @@ def _status(
 _SHORT_NAMES: dict[str, str] = {
     "two sigma":    "TwoSigma",
     "d.e. shaw":    "DEShaw",
+    "d. e. shaw":   "DEShaw",
     "d1 capital":   "D1",
     "light street": "LightSt",
 }
