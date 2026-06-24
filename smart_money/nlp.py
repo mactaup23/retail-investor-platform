@@ -216,6 +216,13 @@ def _extract_mda(text: str, form_type: str) -> str:
     return text[body_start:body_end].strip()
 
 
+def _unwrap_ix(href: str) -> str:
+    """Strip EDGAR's iXBRL viewer prefix (/ix?doc=...) to get the raw file path."""
+    if href.startswith("/ix?doc="):
+        return href[len("/ix?doc="):]
+    return href
+
+
 def _find_primary_htm(cik: str, accession_number: str, form_type: str) -> str | None:
     """
     Parse the filing index page and return the URL of the primary .htm document.
@@ -244,15 +251,15 @@ def _find_primary_htm(cik: str, accession_number: str, form_type: str) -> str | 
             if cell.get_text(strip=True) == form_type:
                 link = row.find("a", href=True)
                 if link:
-                    href: str = link["href"]
+                    href: str = _unwrap_ix(link["href"])
                     if href.lower().endswith((".htm", ".html")):
                         base = "" if href.startswith("http") else "https://www.sec.gov"
                         return f"{base}{href}"
                 break
 
-    # Fallback: first .htm link that is not an index or XSLT view
+    # Fallback: first .htm link that is not an index, XSLT view, or iXBRL viewer
     for a in soup.find_all("a", href=True):
-        href = a["href"]
+        href = _unwrap_ix(a["href"])
         if (
             href.lower().endswith((".htm", ".html"))
             and "index" not in href.lower()
@@ -309,13 +316,13 @@ def _composite(scores: dict[str, float]) -> float:
 _OUTPUT_SCHEMA: dict = {
     "type": "object",
     "properties": {
-        "confidence":              {"type": "number", "minimum": -1, "maximum": 1},
-        "guidance":                {"type": "number", "minimum": -1, "maximum": 1},
-        "risk_factors":            {"type": "number", "minimum": -1, "maximum": 1},
-        "capital_allocation":      {"type": "number", "minimum": -1, "maximum": 1},
-        "competitive_positioning": {"type": "number", "minimum": -1, "maximum": 1},
-        "customer_demand":         {"type": "number", "minimum": -1, "maximum": 1},
-        "operational_efficiency":  {"type": "number", "minimum": -1, "maximum": 1},
+        "confidence":              {"type": "number"},
+        "guidance":                {"type": "number"},
+        "risk_factors":            {"type": "number"},
+        "capital_allocation":      {"type": "number"},
+        "competitive_positioning": {"type": "number"},
+        "customer_demand":         {"type": "number"},
+        "operational_efficiency":  {"type": "number"},
         "reasoning":               {"type": "string"},
     },
     "required": [
