@@ -348,6 +348,41 @@ class NLPCache(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Watchlist
+# ---------------------------------------------------------------------------
+
+class Watchlist(BaseModel):
+    """
+    User-managed watchlist of tickers/CUSIPs to track.
+
+    Positions are soft-deleted via active=False rather than hard-deleted, so
+    history is preserved.  add() guards against duplicate active entries;
+    remove() sets active=False on all matching active rows.
+
+    added_price is optional — used by the dashboard to compute return since
+    the position was added.  note is a free-text user annotation.
+
+    Resolution: at least one of ticker/cusip must be non-null.  watchlist.py
+    populates both when possible via Security and FinalSignal lookups.
+    """
+
+    ticker      = CharField(null=True)
+    cusip       = CharField(null=True)
+    issuer_name = CharField()
+    date_added  = DateField(default=datetime.date.today)
+    added_price = FloatField(null=True)
+    note        = TextField(null=True)
+    active      = BooleanField(default=True)
+
+    class Meta:
+        table_name = "watchlist"
+        indexes = (
+            (("ticker",), False),
+            (("cusip",),  False),
+        )
+
+
+# ---------------------------------------------------------------------------
 # FinalSignal
 # ---------------------------------------------------------------------------
 
@@ -397,7 +432,7 @@ class FinalSignal(BaseModel):
 # Registry and init
 # ---------------------------------------------------------------------------
 
-TABLES = [Fund, Filing, Holding, Security, PriceCache, FundSkillResult, ConvergenceScore, NLPCache, FinalSignal]
+TABLES = [Fund, Filing, Holding, Security, PriceCache, FundSkillResult, ConvergenceScore, NLPCache, FinalSignal, Watchlist]
 
 QUANT_PRICE_GATE = Holding.QUANT_PRICE_GATE  # re-export for callers
 
