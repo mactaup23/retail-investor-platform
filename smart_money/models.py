@@ -309,10 +309,49 @@ class ConvergenceScore(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# NLPCache
+# ---------------------------------------------------------------------------
+
+class NLPCache(BaseModel):
+    """
+    Language-shift scores for portfolio company 10-Q/10-K MD&A sections.
+
+    Keyed by (ticker, accession_current, accession_prior, scorer_version).
+    Written by nlp.py via the Claude Batch API; consumed by convergence.py as
+    an optional enrichment signal.  composite_score is the weighted sum of all
+    7 dimension deltas.
+    """
+
+    ticker                        = CharField()
+    cik_company                   = CharField()
+    accession_current             = CharField()
+    accession_prior               = CharField()
+    form_type                     = CharField()      # "10-Q" | "10-K"
+    scorer_version                = CharField()      # e.g. "v1"
+    confidence_delta              = FloatField()
+    guidance_delta                = FloatField()
+    risk_factors_delta            = FloatField()
+    capital_allocation_delta      = FloatField()
+    competitive_positioning_delta = FloatField()
+    customer_demand_delta         = FloatField()
+    operational_efficiency_delta  = FloatField()
+    composite_score               = FloatField()
+    reasoning                     = TextField()
+    scored_at                     = DateTimeField()
+
+    class Meta:
+        table_name = "nlp_cache"
+        indexes = (
+            (("ticker", "accession_current", "accession_prior", "scorer_version"), True),
+            (("ticker", "scorer_version"), False),
+        )
+
+
+# ---------------------------------------------------------------------------
 # Registry and init
 # ---------------------------------------------------------------------------
 
-TABLES = [Fund, Filing, Holding, Security, PriceCache, FundSkillResult, ConvergenceScore]
+TABLES = [Fund, Filing, Holding, Security, PriceCache, FundSkillResult, ConvergenceScore, NLPCache]
 
 QUANT_PRICE_GATE = Holding.QUANT_PRICE_GATE  # re-export for callers
 
