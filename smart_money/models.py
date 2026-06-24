@@ -184,6 +184,7 @@ class Security(BaseModel):
     # "Common Stock" | "Warrant" | "Depositary Receipt" | etc.
     security_type = CharField(null=True)
     market_sector = CharField(null=True)    # "Equity" | "Corp" | etc.
+    sector = CharField(null=True)           # yfinance GICS sector, e.g. "Technology"
     # pending | resolved | no_match | failed
     resolution_status = CharField(default="pending")
     resolved_at = DateTimeField(null=True)
@@ -265,10 +266,53 @@ class FundSkillResult(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# ConvergenceScore
+# ---------------------------------------------------------------------------
+
+class ConvergenceScore(BaseModel):
+    """
+    Per-CUSIP per-quarter convergence signal written by convergence.scan_quarter().
+
+    Persisted so that convergence_trend can compare current scores to the prior
+    two quarters without recomputing them.  INSERT OR REPLACE semantics (via
+    replace_many) mean each scan_quarter run overwrites prior results for the
+    same period.
+
+    fund_moves_json is a JSON-encoded list[FundMove] (see convergence.py).
+    """
+
+    cusip           = CharField()
+    issuer_name     = CharField()
+    ticker          = CharField(null=True)
+    period          = DateField()
+    convergence_score = FloatField()    # −1 to +1
+    directional     = FloatField()
+    breadth         = FloatField()
+    n_funds_total   = IntegerField()
+    n_funds_bullish = IntegerField()
+    n_funds_bearish = IntegerField()
+    bull_weight     = FloatField()
+    bear_weight     = FloatField()
+    # Enrichments
+    avg_position_pct_of_portfolio = FloatField(null=True)
+    convergence_trend             = CharField(null=True)  # new|accelerating|stable|fading
+    sector                        = CharField(null=True)
+    sector_concentration          = FloatField(null=True)  # 0.0–1.0
+    fund_moves_json               = TextField()
+    computed_at     = DateTimeField(default=datetime.datetime.utcnow)
+
+    class Meta:
+        table_name = "convergence_score"
+        indexes = (
+            (("cusip", "period"), True),   # one row per CUSIP per quarter
+        )
+
+
+# ---------------------------------------------------------------------------
 # Registry and init
 # ---------------------------------------------------------------------------
 
-TABLES = [Fund, Filing, Holding, Security, PriceCache, FundSkillResult]
+TABLES = [Fund, Filing, Holding, Security, PriceCache, FundSkillResult, ConvergenceScore]
 
 QUANT_PRICE_GATE = Holding.QUANT_PRICE_GATE  # re-export for callers
 
@@ -286,4 +330,9 @@ def init_db(path: Path | None = None) -> SqliteDatabase:
     db.execute_sql("PRAGMA journal_mode=WAL")
     db.execute_sql("PRAGMA foreign_keys=ON")
     db.create_tables(TABLES, safe=True)
+    # Additive column migrations for existing databases
+    try:
+        db.execute_sql("ALTER TABLE security ADD COLUMN sector TEXT")
+    except Exception:
+        pass  # column already present
     return db
