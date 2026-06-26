@@ -112,6 +112,7 @@ def load_watchlist_scored(period_str: str) -> list[dict]:
             "signal_drivers":      ws.signal_drivers,
             "convergence_score":   sig.convergence_score if sig else None,
             "nlp_composite_score": sig.nlp_composite_score if sig else None,
+            "nlp_available":       sig.nlp_available if sig else False,
             "n_funds_bullish":     sig.n_funds_bullish if sig else None,
             "n_funds_bearish":     sig.n_funds_bearish if sig else None,
             "convergence_trend":   sig.convergence_trend if sig else None,
@@ -194,6 +195,108 @@ def _lot_to_dict(r) -> dict:
 
 def bust_tax_lot_cache():
     load_tax_lots.clear()
+
+
+# ---------------------------------------------------------------------------
+# Convergence detail (Signal tab)
+# ---------------------------------------------------------------------------
+
+_UNIVERSE_SIZE = 38  # total tracked funds in fund_universe.yaml
+
+
+@st.cache_data(ttl="5m", max_entries=100)
+def load_convergence_detail(cusip: str, period_str: str) -> dict | None:
+    """
+    Full ConvergenceScore row for (cusip, period) with fund_moves_json parsed
+    and a count of how many universe funds currently hold this position.
+    """
+    import json, datetime
+    from smart_money.models import ConvergenceScore, db
+
+    period = datetime.date.fromisoformat(period_str)
+    row = ConvergenceScore.get_or_none(
+        (ConvergenceScore.cusip == cusip) & (ConvergenceScore.period == period)
+    )
+    if row is None:
+        return None
+
+    # Count distinct funds that filed a holding for this CUSIP this period
+    try:
+        result = db.execute_sql(
+            "SELECT COUNT(DISTINCT f.fund_id) FROM filing f "
+            "JOIN holding h ON h.filing_id = f.id "
+            "WHERE h.cusip = ? AND f.period_of_report = ?",
+            (cusip, str(period)),
+        ).fetchone()
+        n_holding = result[0] if result else 0
+    except Exception:
+        n_holding = None
+
+    return {
+        "convergence_score":    row.convergence_score,
+        "directional":          row.directional,
+        "breadth":              row.breadth,
+        "n_funds_total":        row.n_funds_total,
+        "n_funds_bullish":      row.n_funds_bullish,
+        "n_funds_bearish":      row.n_funds_bearish,
+        "bull_weight":          row.bull_weight,
+        "bear_weight":          row.bear_weight,
+        "avg_position_pct":     row.avg_position_pct_of_portfolio,
+        "sector_concentration": row.sector_concentration,
+        "convergence_trend":    row.convergence_trend,
+        "n_holding":            n_holding,
+        "universe_size":        _UNIVERSE_SIZE,
+        "fund_moves":           json.loads(row.fund_moves_json),
+    }
+
+
+@st.cache_data(ttl="10m", max_entries=5)
+def load_fund_skill_map() -> dict[str, dict]:
+    """
+    {fund_name → {alpha_annualized, is_reliable, confidence_label, n_quarters}}
+    Built from FundSkillResult for quick lookup in the Signal tab fund moves table.
+    """
+    from smart_money.models import FundSkillResult, Fund
+    rows = FundSkillResult.select(FundSkillResult, Fund).join(Fund)
+    return {
+        r.fund.name: {
+            "alpha_annualized":  r.alpha_annualized,
+            "is_reliable":       r.is_reliable,
+            "confidence_label":  r.confidence_label,
+            "n_quarters":        r.n_quarters,
+        }
+        for r in rows
+    }
+
+
+# ---------------------------------------------------------------------------
+# NLP detail
+# ---------------------------------------------------------------------------
+
+@st.cache_data(ttl="5m", max_entries=100)
+def load_nlp_detail(ticker: str) -> dict | None:
+    """Most recent NLPCache row for a ticker: composite score, reasoning, dimension deltas."""
+    from smart_money.models import NLPCache
+    row = (
+        NLPCache.select()
+        .where(NLPCache.ticker == ticker)
+        .order_by(NLPCache.scored_at.desc())
+        .first()
+    )
+    if row is None:
+        return None
+    return {
+        "composite_score":               row.composite_score,
+        "reasoning":                     row.reasoning,
+        "scored_at":                     str(row.scored_at),
+        "guidance_delta":                row.guidance_delta,
+        "confidence_delta":              row.confidence_delta,
+        "customer_demand_delta":         row.customer_demand_delta,
+        "competitive_positioning_delta": row.competitive_positioning_delta,
+        "operational_efficiency_delta":  row.operational_efficiency_delta,
+        "risk_factors_delta":            row.risk_factors_delta,
+        "capital_allocation_delta":      row.capital_allocation_delta,
+    }
 
 
 # ---------------------------------------------------------------------------

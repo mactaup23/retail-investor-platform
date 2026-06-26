@@ -17,6 +17,16 @@ st.set_page_config(
 from dashboard.db import get_db
 get_db()
 
+# Pre-warm portfolio FF3 betas so the Factor Profile tab is always instant.
+# cache_resource means this runs exactly once per server process; subsequent
+# page loads (and all other sessions) get an immediate cache hit.
+from dashboard.factor import portfolio_ff3_betas as _prewarm_ff3
+
+_warmup_slot = st.sidebar.empty()
+_warmup_slot.caption(":gray[Initializing factor engine…]")
+_prewarm_ff3()
+_warmup_slot.empty()
+
 # Sidebar header — rendered before every page
 with st.sidebar:
     st.markdown("## :material/query_stats: Smart Money")
