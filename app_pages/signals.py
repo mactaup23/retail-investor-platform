@@ -279,9 +279,58 @@ def _fund_moves_df(moves: list[dict], skill_map: dict) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _portfolio_impact_line(ticker: str) -> str | None:
+    """
+    Return a one-line English description of adding `ticker` at 5% to the current portfolio,
+    or None if factor data is unavailable.
+    """
+    profile = ticker_ff3_profile(ticker)
+    port    = portfolio_ff3_betas()
+    if profile is None or port is None:
+        return None
+
+    pm,   psmb,  phml  = port.get("beta_market", 0), port.get("beta_smb", 0), port.get("beta_hml", 0)
+    bm,   bsmb,  bhml  = profile["beta_market"], profile["beta_smb"], profile["beta_hml"]
+    new_m, new_smb, new_hml = 0.95 * pm + 0.05 * bm, 0.95 * psmb + 0.05 * bsmb, 0.95 * phml + 0.05 * bhml
+
+    dm = new_m - pm
+    if dm > 0.01:
+        market_part = f"increase your market beta from {pm:.2f} to {new_m:.2f}"
+    elif dm < -0.01:
+        market_part = f"reduce your market beta from {pm:.2f} to {new_m:.2f}"
+    else:
+        market_part = f"leave your market beta roughly flat ({pm:.2f} → {new_m:.2f})"
+
+    d_smb = abs(new_smb - psmb)
+    d_hml = abs(new_hml - phml)
+    sec_part = ""
+    if max(d_smb, d_hml) > 0.02:
+        if d_hml >= d_smb:
+            if new_hml < phml:
+                desc = "deepen your existing growth tilt" if phml < -0.05 else "add a growth tilt"
+            else:
+                desc = "reinforce your existing value tilt" if phml > 0.05 else "add a value tilt"
+            sec_part = f" and {desc} (HML {phml:+.2f} → {new_hml:+.2f})"
+        else:
+            if new_smb > psmb:
+                desc = "increase small-cap exposure"
+            else:
+                desc = "reduce small-cap exposure"
+            sec_part = f" and {desc} (SMB {psmb:+.2f} → {new_smb:+.2f})"
+
+    return f"Adding {ticker} at 5% would {market_part}{sec_part}. Full factor breakdown in the Factor Profile tab."
+
+
 def _render_signal_tab(row: dict, period_str: str) -> None:
     cusip  = row.get("cusip")
     ticker = row.get("ticker")
+
+    # Portfolio impact callout for high-conviction signals only
+    final_score = row.get("final_score")
+    if final_score is not None and final_score >= 0.50 and ticker:
+        impact = _portfolio_impact_line(ticker)
+        if impact:
+            st.info(impact, icon=":material/science:")
 
     # --- Convergence score breakdown ---
     st.markdown("#### Convergence Signal")
@@ -1158,39 +1207,47 @@ def _render_factor_tab(ticker: str) -> None:
         st.caption(":gray[Portfolio betas not available — run the Portfolio page to compute them.]")
         return
 
-    pm  = port.get("beta_market", 0)
+    pm   = port.get("beta_market", 0)
     psmb = port.get("beta_smb", 0)
     phml = port.get("beta_hml", 0)
 
-    # Impact of adding a 5% position (scales existing portfolio to 95%)
-    new_m   = 0.95 * pm   + 0.05 * bm
-    new_smb = 0.95 * psmb + 0.05 * bsmb
-    new_hml = 0.95 * phml + 0.05 * bhml
+    alloc_pct = st.select_slider(
+        "Allocation size",
+        options=[1, 2, 5, 10, 15, 20],
+        value=5,
+        format_func=lambda x: f"{x}%",
+        key=f"factor_alloc_{ticker}",
+    )
+    w = alloc_pct / 100
+    new_m   = (1 - w) * pm   + w * bm
+    new_smb = (1 - w) * psmb + w * bsmb
+    new_hml = (1 - w) * phml + w * bhml
 
     def _delta_icon(delta: float) -> str:
         return ":green[↑]" if delta > 0.02 else ":red[↓]" if delta < -0.02 else ":gray[→]"
 
+    impact_col = f"+{alloc_pct}% Impact"
     comp_data = [
         {
-            "Factor":      "Market β",
-            "This Stock":  f"{bm:+.3f}",
-            "Portfolio":   f"{pm:+.3f}",
-            "+5% Impact":  f"{new_m:+.3f} ({new_m - pm:+.3f})",
-            "":            _delta_icon(new_m - pm),
+            "Factor":     "Market β",
+            "This Stock": f"{bm:+.3f}",
+            "Portfolio":  f"{pm:+.3f}",
+            impact_col:   f"{new_m:+.3f} ({new_m - pm:+.3f})",
+            "":           _delta_icon(new_m - pm),
         },
         {
-            "Factor":      "SMB β (size)",
-            "This Stock":  f"{bsmb:+.3f}",
-            "Portfolio":   f"{psmb:+.3f}",
-            "+5% Impact":  f"{new_smb:+.3f} ({new_smb - psmb:+.3f})",
-            "":            _delta_icon(new_smb - psmb),
+            "Factor":     "SMB β (size)",
+            "This Stock": f"{bsmb:+.3f}",
+            "Portfolio":  f"{psmb:+.3f}",
+            impact_col:   f"{new_smb:+.3f} ({new_smb - psmb:+.3f})",
+            "":           _delta_icon(new_smb - psmb),
         },
         {
-            "Factor":      "HML β (value/growth)",
-            "This Stock":  f"{bhml:+.3f}",
-            "Portfolio":   f"{phml:+.3f}",
-            "+5% Impact":  f"{new_hml:+.3f} ({new_hml - phml:+.3f})",
-            "":            _delta_icon(new_hml - phml),
+            "Factor":     "HML β (value/growth)",
+            "This Stock": f"{bhml:+.3f}",
+            "Portfolio":  f"{phml:+.3f}",
+            impact_col:   f"{new_hml:+.3f} ({new_hml - phml:+.3f})",
+            "":           _delta_icon(new_hml - phml),
         },
     ]
     st.dataframe(pd.DataFrame(comp_data), hide_index=True, width="stretch")
@@ -1218,7 +1275,7 @@ def _render_factor_tab(ticker: str) -> None:
     else:
         verdicts.append("deepens growth tilt")
 
-    st.caption(f":material/balance: Adding {ticker} at 5%: " + " · ".join(verdicts) + ".")
+    st.caption(f":material/balance: Adding {ticker} at {alloc_pct}%: " + " · ".join(verdicts) + ".")
     st.caption(
         f"Portfolio analysis period: {port.get('start', '?')} → {port.get('end', '?')} · "
         f"R² = {port.get('r_squared', 0):.3f}"
