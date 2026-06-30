@@ -485,7 +485,7 @@ def _render_price_tab(ticker: str, info: dict, hist: pd.DataFrame) -> None:
 # Tab 3 — Valuation
 # ---------------------------------------------------------------------------
 
-def _render_valuation_tab(info: dict) -> None:
+def _render_valuation_tab(ticker: str, info: dict) -> None:
     def _n(v, fmt=".1f"):
         f = _safe_float(v)
         return f"{f:{fmt}}" if f is not None else "N/A"
@@ -522,6 +522,55 @@ def _render_valuation_tab(info: dict) -> None:
     _card(c4, "P/B",        _n(info.get("priceToBook"), ".2f"))
     _card(c5, "P/S (TTM)",  _n(info.get("priceToSalesTrailing12Months"), ".2f"))
     _card(c6, "EV/EBITDA",  _n(info.get("enterpriseToEbitda")))
+
+    st.markdown("---")
+
+    # ── FCF Metrics ────────────────────────────────────────────────────────
+    st.markdown("**Free Cash Flow Metrics**")
+
+    _cf  = _yf_cashflow(ticker, annual=False)
+    _fin = _yf_financials(ticker, annual=False)
+
+    _fcf_row = _find_row(_cf, ["Free Cash Flow"]) if not _cf.empty else None
+    _rev_row = _find_row(_fin, ["Total Revenue", "Operating Revenue"]) if not _fin.empty else None
+
+    _fcf_q = _safe_float(_fcf_row.iloc[0]) if _fcf_row is not None else None
+    _rev_q = _safe_float(_rev_row.iloc[0]) if _rev_row is not None else None
+    _ev    = _safe_float(info.get("enterpriseValue"))
+
+    _fcf_yield  = (_fcf_q * 4) / _ev * 100   if (_fcf_q is not None and _ev and _ev != 0) else None
+    _fcf_margin = _fcf_q / _rev_q * 100       if (_fcf_q is not None and _rev_q and _rev_q != 0) else None
+
+    fcf_c1, fcf_c2 = st.columns(2)
+
+    with fcf_c1:
+        st.markdown(":gray[FCF Yield (annualized)]")
+        if _fcf_yield is not None:
+            _fy_color = "green" if _fcf_yield >= 4 else "orange" if _fcf_yield >= 1.5 else "red"
+            st.markdown(f"### :{_fy_color}[{_fcf_yield:.1f}%]")
+        else:
+            st.markdown("### N/A")
+        st.caption(
+            "How much free cash the company generates per $100 of enterprise value — "
+            "higher means better value. Quarterly FCF annualized (×4) ÷ EV."
+        )
+
+    with fcf_c2:
+        st.markdown(":gray[FCF Margin]")
+        if _fcf_margin is not None:
+            _fm_color = "green" if _fcf_margin >= 15 else "orange" if _fcf_margin >= 5 else "red"
+            st.markdown(f"### :{_fm_color}[{_fcf_margin:.1f}%]")
+        else:
+            st.markdown("### N/A")
+        st.caption(
+            "What percentage of revenue becomes free cash flow — "
+            "a measure of capital efficiency. Most recent quarter FCF ÷ Revenue."
+        )
+
+    if _fcf_q is not None:
+        st.caption(f"Most recent quarter FCF: {_fmt_b(_fcf_q)}")
+    elif _fcf_row is None:
+        st.caption(":gray[Free Cash Flow row not found in yfinance cashflow data.]")
 
     st.markdown("---")
 
@@ -1127,7 +1176,7 @@ def _render_deep_dive(ticker: str, row: dict, period_str: str) -> None:
         _render_price_tab(ticker, info, hist)
 
     with tab_val:
-        _render_valuation_tab(info)
+        _render_valuation_tab(ticker, info)
 
     with tab_fin:
         _render_financials_tab(ticker)
