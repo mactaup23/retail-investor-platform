@@ -128,11 +128,28 @@ with st.expander(
             except Exception as e:
                 st.error(f"Ingest failed: {e}", icon=":material/error:")
 
+_EMPTY_PLACEHOLDER = (
+    "Upload a cost-basis CSV above to unlock this view. "
+    "The Inventory tab shows all your lots with unrealized G/L, "
+    "Harvest Candidates surfaces loss lots with estimated tax savings, "
+    "and the Sell Modeler compares FIFO, LIFO, and MIN_TAX side-by-side before you act."
+)
+
 if not lots:
-    st.info(
-        "No lot data loaded. Upload a brokerage CSV export above to get started.",
-        icon=":material/info:",
+    tab_inv, tab_harv, tab_sell = st.tabs(
+        [
+            ":material/table_chart: Inventory",
+            ":material/savings: Harvest candidates",
+            ":material/calculate: Sell modeler",
+        ],
+        on_change="rerun",
     )
+    with tab_inv:
+        st.info(_EMPTY_PLACEHOLDER, icon=":material/upload:")
+    with tab_harv:
+        st.info(_EMPTY_PLACEHOLDER, icon=":material/upload:")
+    with tab_sell:
+        st.info(_EMPTY_PLACEHOLDER, icon=":material/upload:")
     st.stop()
 
 # Show valuation date staleness

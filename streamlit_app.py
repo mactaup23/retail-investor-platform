@@ -4,6 +4,9 @@ Entry point for the Streamlit multi-page app.
 
 Page order: Signals (default) → Portfolio → Tax Lots → About
 """
+from dotenv import load_dotenv
+load_dotenv()
+
 import streamlit as st
 
 st.set_page_config(

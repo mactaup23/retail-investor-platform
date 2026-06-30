@@ -126,11 +126,13 @@ if refresh:
 elif cached is not None:
     data = cached
 else:
-    st.info(
-        "No cached analysis found. Set a date range and click **Refresh analysis** to run.",
-        icon=":material/info:",
-    )
-    st.stop()
+    with st.spinner("Running factor analysis on first load (~20 seconds)…"):
+        try:
+            data = _run_analysis(start_date, end_date)
+            st.rerun()
+        except Exception as e:
+            st.error(f"Analysis failed: {e}", icon=":material/error:")
+            st.stop()
 
 # Show cache age
 age = analysis_cache.age_str(data)
@@ -163,8 +165,7 @@ st.caption(
 
 # Plain-English summary
 st.subheader("What the numbers mean")
-with st.container(border=True):
-    st.markdown(f"```\n{data['summary_text']}\n```")
+st.info(data["summary_text"], icon=":material/lightbulb:")
 
 
 # ---------------------------------------------------------------------------
@@ -257,8 +258,23 @@ st.subheader("Stress scenarios")
 
 stress = data.get("stress_tests", [])
 if not stress:
-    st.caption(":gray[Stress test results not in cache. Click Refresh analysis to compute them.]")
-else:
+    with st.spinner("Computing stress scenarios…"):
+        try:
+            from factor_engine.stress_test import run_stress_tests
+            import json
+            h = data["headline"]
+            stress = run_stress_tests(
+                beta_market=h["beta_market"],
+                beta_smb=h["beta_smb"],
+                beta_hml=h["beta_hml"],
+                alpha_daily=h["alpha_daily"],
+            )
+            data["stress_tests"] = stress
+            analysis_cache.CACHE_PATH.write_text(json.dumps(data, indent=2, default=str))
+        except Exception:
+            st.caption(":gray[Stress test results unavailable. Click Refresh analysis to recompute.]")
+
+if stress:
     cols = st.columns(len(stress))
     for col, scenario in zip(cols, stress):
         with col:

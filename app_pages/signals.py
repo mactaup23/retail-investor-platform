@@ -224,7 +224,9 @@ def _fmt_b(v) -> str:
         return f"${f / 1e9:.1f}B"
     if abs_f >= 1e6:
         return f"${f / 1e6:.0f}M"
-    return f"${f:,.0f}"
+    if abs_f > 0:
+        return "<$1M"
+    return "$0"
 
 
 def _fmt_pct(v) -> str:
@@ -272,7 +274,7 @@ def _fund_moves_df(moves: list[dict], skill_map: dict) -> pd.DataFrame:
             "Fund":       m["fund_name"],
             "Change":     m["change_type"],
             "Pos %":      f"{m['portfolio_pct']:.2f}%" if m.get("portfolio_pct") else "—",
-            "Value":      f"${m['current_value_usd'] / 1e6:.0f}M" if m.get("current_value_usd") else "—",
+            "Value":      _fmt_b(m.get("current_value_usd")),
             "Skill Wt":   f"{m['skill_weight']:.2f}",
             "Skill":      skill_str,
         })
@@ -500,7 +502,9 @@ def _render_price_tab(ticker: str, info: dict, hist: pd.DataFrame) -> None:
     c2.metric("52w High", f"${high52:,.2f}" if high52 else "—")
     c3.metric("52w Low",  f"${low52:,.2f}"  if low52  else "—")
     c4.metric("From 52w High", f"{from_high:+.1f}%" if from_high is not None else "—")
-    c5.metric("Beta", f"{beta:.2f}" if beta else "—")
+    c5.metric("Beta", f"{beta:.2f}" if beta is not None else "—")
+    if beta is None:
+        c5.caption(":gray[Insufficient price history for beta estimate]")
 
     # Row 2: volume + period returns
     c6, c7, c8, c9, c10 = st.columns(5)
@@ -1358,7 +1362,9 @@ def _render_card(
         with col_name:
             st.markdown(f"**{display}**")
             if issuer and issuer.lower() != display.lower():
-                st.caption(issuer)
+                # EDGAR issuer_name is hard-truncated at 28 chars; signal that to the reader
+                display_issuer = issuer.rstrip() + "…" if len(issuer) == 28 else issuer
+                st.caption(display_issuer)
             detail_parts = []
             if row.get("sector"):
                 detail_parts.append(row["sector"])

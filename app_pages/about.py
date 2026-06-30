@@ -148,7 +148,7 @@ st.markdown("""
 - Long/short equity: Appaloosa, Viking Global, Pershing Square, D1 Capital, Light Street,
   Tiger Global, Coatue, Lone Pine, Third Point, Greenlight, Eminence, Glenview, Maverick,
   Highfields, Baupost, Greenlight, Duquesne
-- Fundamental value: Berkshire Hathaway, Ariel, Fairholme, Gotham
+- Fundamental value: Berkshire Hathaway, Ariel, Fairholme, Gotham†
 - Quant/systematic: Renaissance, Two Sigma, DE Shaw, AQR, Citadel, Millennium
 - Sector specialist: Baker Bros (biotech), Whale Rock (tech), Durable Capital (tech),
   Senator Investment (diversified), Sachem Head (industrials)
@@ -188,6 +188,11 @@ thousands of foreign and delisted positions that yfinance cannot price. Their co
 rate (fraction of beginning-of-quarter holdings with available end-of-quarter prices) is
 structurally below the 80% gate required for return computation. These funds are tracked
 for crowding analysis but their skill scores are unreliable.
+
+† Gotham Asset Management has no post-2013 13F filings. Pre-XML EDGAR format filings are
+not parsed by this platform. Gotham appears in the fund universe for completeness but
+contributes no data to signals or skill scoring. It is scheduled for replacement in a
+future update.
 """)
 
 # ---------------------------------------------------------------------------
