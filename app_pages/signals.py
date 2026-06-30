@@ -1057,18 +1057,17 @@ def _render_earnings_tab(ticker: str, info: dict) -> None:
     ax.bar([x - w / 2 for x in xs], ests, w, label="Estimate", color="#94a3b8", alpha=0.85)
     ax.bar([x + w / 2 for x in xs], acts, w, label="Actual",   color=colors,    alpha=0.95)
 
+    y_max = max((abs(v) for v in acts if v is not None), default=1)
     for i, r in enumerate(past):
         surp = r.get("surp")
         act  = r.get("act")
         if surp is not None and act is not None:
-            s_color = "#15803d" if surp >= 0 else "#dc2626"
-            ax.annotate(
+            ax.text(
+                i + w / 2,
+                act + y_max * 0.015,
                 f"{surp:+.0f}%",
-                xy=(i + w / 2, act),
-                xytext=(0, 5),
-                textcoords="offset points",
                 ha="center", va="bottom",
-                fontsize=8, fontweight="bold", color=s_color,
+                fontsize=7, color="#374151",
             )
 
     ax.set_xticks(xs)
@@ -1086,7 +1085,7 @@ def _render_earnings_tab(ticker: str, info: dict) -> None:
     # Detail table
     table = [
         {
-            "Quarter":  r["date"],
+            "Quarter":  _to_quarter_label(r["date"]),
             "EPS Est":  f"${r['est']:.2f}" if r["est"] is not None else "—",
             "EPS Act":  f"${r['act']:.2f}" if r["act"] is not None else "—",
             "Surprise": f"{r['surp']:+.1f}%" if r["surp"] is not None else "—",
