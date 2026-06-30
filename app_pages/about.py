@@ -318,6 +318,27 @@ provide your marginal rates.
 
 # ---------------------------------------------------------------------------
 
+st.subheader("Valuation — FCF yield comparison")
+
+st.markdown("""
+**FCF Yield Historical Comparison:** To assess whether a company's current free cash flow
+yield is unusually high or low, the platform compares trailing-twelve-month (TTM) FCF yield
+against the company's own 3-year historical average — using the 3 fiscal years prior to
+the most recent completed year (not including the most recent year itself). This avoids
+comparing the current figure against a baseline that overlaps with the same period, which
+would understate genuine changes. If fewer than 3 years of historical data are available,
+the platform falls back to a general absolute benchmark (FCF yield above 4% is generally
+considered strong, below 1.5% generally weak) rather than a company-specific comparison.
+
+TTM FCF is computed by summing the four most recent quarterly free cash flow figures rather
+than annualising a single quarter — this correctly captures seasonal variation that a
+single-quarter ×4 annualisation would distort (e.g. a retailer with heavy Q4 cash
+generation). The TTM FCF margin uses the same four-quarter sum in both numerator and
+denominator (TTM FCF ÷ TTM Revenue) for consistency.
+""")
+
+# ---------------------------------------------------------------------------
+
 st.subheader("Data sources and limitations")
 
 st.markdown("""

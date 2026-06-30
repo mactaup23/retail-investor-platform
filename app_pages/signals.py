@@ -534,29 +534,64 @@ def _render_valuation_tab(ticker: str, info: dict) -> None:
     _fcf_row = _find_row(_cf, ["Free Cash Flow"]) if not _cf.empty else None
     _rev_row = _find_row(_fin, ["Total Revenue", "Operating Revenue"]) if not _fin.empty else None
 
-    _fcf_q = _safe_float(_fcf_row.iloc[0]) if _fcf_row is not None else None
-    _rev_q = _safe_float(_rev_row.iloc[0]) if _rev_row is not None else None
-    _ev    = _safe_float(info.get("enterpriseValue"))
+    # TTM FCF: sum of up to 4 most recent quarters (avoids single-quarter × 4 seasonality distortion)
+    _fcf_vals_q = [_safe_float(_fcf_row.iloc[i]) for i in range(min(4, len(_fcf_row)))] if _fcf_row is not None else []
+    _fcf_valid  = [v for v in _fcf_vals_q if v is not None]
+    _fcf_ttm    = sum(_fcf_valid) if _fcf_valid else None
+    _n_fcf_qtrs = len(_fcf_valid)
 
-    _fcf_yield  = (_fcf_q * 4) / _ev * 100   if (_fcf_q is not None and _ev and _ev != 0) else None
-    _fcf_margin = _fcf_q / _rev_q * 100       if (_fcf_q is not None and _rev_q and _rev_q != 0) else None
+    # TTM Revenue: sum of up to 4 most recent quarters (consistent denominator for margin)
+    _rev_vals_q = [_safe_float(_rev_row.iloc[i]) for i in range(min(4, len(_rev_row)))] if _rev_row is not None else []
+    _rev_valid_q = [v for v in _rev_vals_q if v is not None]
+    _rev_ttm    = sum(_rev_valid_q) if _rev_valid_q else None
+
+    _ev = _safe_float(info.get("enterpriseValue"))
+
+    _fcf_yield  = _fcf_ttm / _ev * 100 if (_fcf_ttm is not None and _ev and _ev != 0) else None
+    _fcf_margin = _fcf_ttm / _rev_ttm * 100 if (_fcf_ttm is not None and _rev_ttm and _rev_ttm != 0) else None
+
+    # 3-year historical FCF yield average: annual indices 1-3 (prior years, excluding most recent)
+    _cf_annual = _yf_cashflow(ticker, annual=True)
+    _fcf_hist_avg: float | None = None
+    if not _cf_annual.empty and _ev and _ev != 0:
+        _fcf_annual_row = _find_row(_cf_annual, ["Free Cash Flow"])
+        if _fcf_annual_row is not None and len(_fcf_annual_row) >= 4:
+            _hist_fcf   = [_safe_float(_fcf_annual_row.iloc[i]) for i in range(1, 4)]
+            _hist_valid = [v for v in _hist_fcf if v is not None]
+            if len(_hist_valid) >= 3:
+                _fcf_hist_avg = sum(v / _ev * 100 for v in _hist_valid) / len(_hist_valid)
 
     fcf_c1, fcf_c2 = st.columns(2)
 
     with fcf_c1:
-        st.markdown(":gray[FCF Yield (annualized)]")
+        st.markdown(":gray[FCF Yield (TTM)]")
         if _fcf_yield is not None:
-            _fy_color = "green" if _fcf_yield >= 4 else "orange" if _fcf_yield >= 1.5 else "red"
+            if _fcf_hist_avg is not None:
+                _fy_color = (
+                    "green"  if _fcf_yield > _fcf_hist_avg * 1.15 else
+                    "red"    if _fcf_yield < _fcf_hist_avg * 0.85 else
+                    "orange"
+                )
+            else:
+                _fy_color = "green" if _fcf_yield >= 4 else "orange" if _fcf_yield >= 1.5 else "red"
             st.markdown(f"### :{_fy_color}[{_fcf_yield:.1f}%]")
         else:
             st.markdown("### N/A")
-        st.caption(
-            "How much free cash the company generates per $100 of enterprise value — "
-            "higher means better value. Quarterly FCF annualized (×4) ÷ EV."
-        )
+        with st.expander("ℹ️ Methodology"):
+            if _fcf_hist_avg is not None:
+                st.caption(
+                    f"Compared against 3-year historical average ({_fcf_hist_avg:.1f}%), "
+                    "excluding the most recent fiscal year to avoid overlap bias. "
+                    "See About page for full methodology."
+                )
+            else:
+                st.caption(
+                    "Insufficient history for historical comparison — using general benchmark. "
+                    "See About page for full methodology."
+                )
 
     with fcf_c2:
-        st.markdown(":gray[FCF Margin]")
+        st.markdown(":gray[FCF Margin (TTM)]")
         if _fcf_margin is not None:
             _fm_color = "green" if _fcf_margin >= 15 else "orange" if _fcf_margin >= 5 else "red"
             st.markdown(f"### :{_fm_color}[{_fcf_margin:.1f}%]")
@@ -564,11 +599,11 @@ def _render_valuation_tab(ticker: str, info: dict) -> None:
             st.markdown("### N/A")
         st.caption(
             "What percentage of revenue becomes free cash flow — "
-            "a measure of capital efficiency. Most recent quarter FCF ÷ Revenue."
+            "a measure of capital efficiency. TTM FCF ÷ TTM Revenue."
         )
 
-    if _fcf_q is not None:
-        st.caption(f"Most recent quarter FCF: {_fmt_b(_fcf_q)}")
+    if _fcf_ttm is not None:
+        st.caption(f"TTM FCF ({_n_fcf_qtrs}q sum): {_fmt_b(_fcf_ttm)}")
     elif _fcf_row is None:
         st.caption(":gray[Free Cash Flow row not found in yfinance cashflow data.]")
 
@@ -1043,15 +1078,61 @@ def _render_factor_tab(ticker: str) -> None:
     alpha = profile["alpha_annualized"]
 
     # --- Metrics grid ---
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Market β", f"{bm:+.3f}",  help=f"t = {profile['t_stat_market']:+.2f}")
-    c2.metric("SMB β",    f"{bsmb:+.3f}", help=f"t = {profile['t_stat_smb']:+.2f}")
-    c3.metric("HML β",    f"{bhml:+.3f}", help=f"t = {profile['t_stat_hml']:+.2f}")
-    c4.metric("R²",       f"{r2:.3f}",   help="Fraction of daily return variance explained by FF3")
-    c5.metric("Alpha (ann.)", f"{alpha * 100:+.2f}%", help="Excess return above factor exposures")
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    c1.metric(
+        "Market β", f"{bm:+.3f}",
+        help=(
+            "Market Beta measures how sensitive this stock is to overall market movements. "
+            "A beta of 1.0 means it moves in line with the market. Above 1.0 means more volatile "
+            "than the market — a 10% market move implies a larger move in this stock. Below 1.0 "
+            "means less sensitive. Negative beta means it tends to move opposite to the market."
+        ),
+    )
+    c2.metric(
+        "SMB β", f"{bsmb:+.3f}",
+        help=(
+            "Size Factor (Small Minus Big) measures exposure to the size premium. Positive values "
+            "mean the stock behaves more like small-cap stocks. Negative values mean it behaves "
+            "more like large-cap stocks."
+        ),
+    )
+    c3.metric(
+        "HML β", f"{bhml:+.3f}",
+        help=(
+            "Value/Growth Factor (High Minus Low book-to-market) measures the stock's style tilt. "
+            "Positive values indicate a value tilt — cheap relative to book value. Negative values "
+            "indicate a growth tilt — priced on future earnings rather than current assets. "
+            "Near zero means style-neutral."
+        ),
+    )
+    c4.metric(
+        "R²", f"{r2:.3f}",
+        help=(
+            "R-Squared measures how much of this stock's daily return variance is explained by "
+            "the three Fama-French factors (market, size, value). Higher R² means the stock is "
+            "more factor-driven; lower means more stock-specific."
+        ),
+    )
+    c5.metric(
+        "Alpha (ann.)", f"{alpha * 100:+.2f}%",
+        help=(
+            "Annualized Alpha is the return unexplained by factor exposures — the stock's "
+            "performance above or below what its market, size, and value tilts would predict. "
+            "Positive alpha suggests historical outperformance versus its factor benchmark; "
+            "negative means underperformance. This is a historical measure, not a prediction "
+            "of future returns."
+        ),
+    )
+    c6.metric(
+        "n_obs", str(profile["n_obs"]),
+        help=(
+            "Number of trading days used in the regression. More observations generally produce "
+            "more reliable factor estimates. The analysis uses daily returns over the selected "
+            "date range."
+        ),
+    )
 
     st.caption(
-        f"Based on {profile['n_obs']} trading days · "
         f"{profile['start']} → {profile['end']} · "
         f"Ken French US FF3 factors"
     )
