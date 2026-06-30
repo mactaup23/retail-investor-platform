@@ -341,7 +341,7 @@ def _render_signal_tab(row: dict, period_str: str) -> None:
     bulls = row.get("n_funds_bullish") or 0
     bears = row.get("n_funds_bearish") or 0
 
-    c1, c2, c3, c4, c5 = st.columns(5)
+    c1, c2, c3, c4, c5 = st.columns([1, 1.5, 1, 1, 1])
     _, conv_color = _conviction_info(conv)
     c1.metric("Conv Score", f"{conv:+.3f}" if conv is not None else "—")
     if trend:
@@ -687,9 +687,9 @@ def _render_valuation_tab(ticker: str, info: dict) -> None:
 
     parts: list[str] = []
     if target:
-        parts.append(f"**${target:,.2f}** target")
+        parts.append(f"**\\${target:,.2f}** target")
     if cur:
-        parts.append(f"**${cur:,.2f}** current")
+        parts.append(f"**\\${cur:,.2f}** current")
         if target:
             upside = (target - cur) / cur * 100
             up_col = "green" if upside >= 0 else "red"

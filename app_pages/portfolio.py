@@ -184,10 +184,14 @@ ph_df = ph_df.sort_values("weight", ascending=False)
 
 # Stacked bar chart — weighted beta contributions
 chart_df = pd.DataFrame([
-    {"ticker": r["ticker"], "factor": "β market", "contribution": r["wtd_beta_market"]},
-    {"ticker": r["ticker"], "factor": "β SMB",    "contribution": r["wtd_beta_smb"]},
-    {"ticker": r["ticker"], "factor": "β HML",    "contribution": r["wtd_beta_hml"]},
-] for r in per_holding)
+    row
+    for r in per_holding
+    for row in [
+        {"ticker": r["ticker"], "factor": "β market", "contribution": r["wtd_beta_market"]},
+        {"ticker": r["ticker"], "factor": "β SMB",    "contribution": r["wtd_beta_smb"]},
+        {"ticker": r["ticker"], "factor": "β HML",    "contribution": r["wtd_beta_hml"]},
+    ]
+])
 
 bar_chart = (
     alt.Chart(chart_df)
@@ -207,7 +211,7 @@ bar_chart = (
     )
     .properties(height=280)
 )
-st.altair_chart(bar_chart)
+st.altair_chart(bar_chart, use_container_width=True)
 
 # Attribution table
 st.dataframe(
