@@ -48,14 +48,29 @@ _RAW_WEIGHTS: dict[str, float] = {
 _TOTAL = sum(_RAW_WEIGHTS.values())
 WEIGHTS: dict[str, float] = {t: w / _TOTAL for t, w in _RAW_WEIGHTS.items()}
 
-# VXUS is an international ETF.  See factor_engine/french_data.py for the full
-# methodology note on why we use US FF3 factors rather than a regional blend.
-_INTERNATIONAL_TICKERS: frozenset[str] = frozenset({"VXUS"})
+# Common international / global-ex-US equity ETFs.  See factor_engine/french_data.py
+# for the full methodology note on why these use US FF3 factors rather than a
+# regional blend (Ken French doesn't publish a matching "developed ex-US" daily
+# series; correlation with US factors is r ≈ 0.70–0.85). This is a maintained
+# list rather than live category lookups, since yfinance's category/fund-family
+# metadata is inconsistent across issuers and would make basis labeling
+# non-deterministic.
+_INTERNATIONAL_TICKERS: frozenset[str] = frozenset({
+    "VXUS", "IXUS", "EFA", "IEFA", "VEU", "ACWX", "VT", "ACWI", "URTH",
+    "VWO", "IEMG", "EEM", "SCHF", "SPDW", "SCZ", "GWX", "EFAV", "DLS", "IDEV",
+    "FNDF", "VSS", "SCHE", "SCHC", "IXUS", "VGK", "VPL", "EWJ", "FEZ",
+})
 
-FACTOR_BASIS_LABEL: dict[str, str] = {
-    t: ("US FF3 (intl. approx.)" if t in _INTERNATIONAL_TICKERS else "US FF3")
-    for t in WEIGHTS
-}
+
+def _is_international_ticker(ticker: str) -> bool:
+    return ticker.upper() in _INTERNATIONAL_TICKERS
+
+
+def _factor_basis_label(ticker: str) -> str:
+    return "US FF3 (intl. approx.)" if _is_international_ticker(ticker) else "US FF3"
+
+
+FACTOR_BASIS_LABEL: dict[str, str] = {t: _factor_basis_label(t) for t in WEIGHTS}
 
 
 # ---------------------------------------------------------------------------
@@ -234,6 +249,7 @@ def run_per_holding_regressions(
     factors: pd.DataFrame,
     start: str,
     end: str,
+    weights: dict[str, float],
 ) -> list[dict]:
     """
     FF3 regression for each holding individually (Tier 2 attribution).
@@ -242,7 +258,7 @@ def run_per_holding_regressions(
     contributions.
     """
     results = []
-    for ticker, weight in WEIGHTS.items():
+    for ticker, weight in weights.items():
         ticker_rets = load_returns([ticker], start, end)[ticker]
         combined = ticker_rets.to_frame("stock").join(factors, how="inner").dropna()
         excess = combined["stock"] - combined["rf"]
@@ -250,7 +266,7 @@ def run_per_holding_regressions(
         reg.update({
             "ticker":           ticker,
             "weight":           weight,
-            "factor_basis":     FACTOR_BASIS_LABEL[ticker],
+            "factor_basis":     _factor_basis_label(ticker),
             "wtd_beta_market":  round(weight * reg["beta_market"], 4),
             "wtd_beta_smb":     round(weight * reg["beta_smb"], 4),
             "wtd_beta_hml":     round(weight * reg["beta_hml"], 4),
@@ -263,14 +279,27 @@ def run_per_holding_regressions(
 # Top-level entry point
 # ---------------------------------------------------------------------------
 
-def analyze_portfolio(start: str = "2021-01-04", end: str = "2024-12-31") -> dict:
+def analyze_portfolio(
+    start: str = "2021-01-04",
+    end: str = "2024-12-31",
+    weights: dict[str, float] | None = None,
+) -> dict:
     """
     Run the full portfolio factor analysis.
+
+    Parameters
+    ----------
+    weights : optional dict of ticker -> weight
+        Un-normalized (raw) portfolio weights. Defaults to the hardcoded
+        example portfolio (module-level _RAW_WEIGHTS) when omitted. Weights
+        need not sum to 1.0 — they are normalized internally before the
+        regressions run.
 
     Returns
     -------
     dict with keys:
         weights         — normalized weight dict
+        raw_weights     — the weights as passed in (un-normalized)
         factors         — the factor DataFrame used
         combined_rets   — portfolio combined return Series
         headline        — Tier 1 regression results dict
@@ -278,28 +307,32 @@ def analyze_portfolio(start: str = "2021-01-04", end: str = "2024-12-31") -> dic
         summary_text    — plain-English interpretation string
         start, end      — analysis period
     """
+    raw_weights = weights if weights is not None else _RAW_WEIGHTS
+    total_raw = sum(raw_weights.values())
+    norm_weights = {t: w / total_raw for t, w in raw_weights.items()}
+
     print(f"Fetching Fama-French factor data ({start} → {end})...")
     factors = get_ff3_daily(start, end)
     if factors.empty:
         raise ValueError(f"No French FF3 data returned for {start}–{end}")
 
-    print(f"Fetching price data for {list(WEIGHTS.keys())}...")
-    all_returns = load_returns(list(WEIGHTS.keys()), start, end)
+    print(f"Fetching price data for {list(norm_weights.keys())}...")
+    all_returns = load_returns(list(norm_weights.keys()), start, end)
 
     print("Building combined portfolio return series...")
-    combined_rets = build_combined_return_series(all_returns, WEIGHTS)
+    combined_rets = build_combined_return_series(all_returns, norm_weights)
 
     print("Running headline (combined series) FF3 regression...")
     headline = run_headline_regression(combined_rets, factors, start, end)
 
     print("Running per-holding FF3 regressions...")
-    per_holding = run_per_holding_regressions(factors, start, end)
+    per_holding = run_per_holding_regressions(factors, start, end, norm_weights)
 
     summary_text = generate_plain_english_summary(headline, per_holding)
 
     return {
-        "weights":       WEIGHTS,
-        "raw_weights":   _RAW_WEIGHTS,
+        "weights":       norm_weights,
+        "raw_weights":   raw_weights,
         "factors":       factors,
         "combined_rets": combined_rets,
         "headline":      headline,

@@ -1,8 +1,10 @@
 """
-Portfolio page — Fama-French 3-factor analysis of the real portfolio.
+Portfolio page — Fama-French 3-factor analysis of the user's editable portfolio.
 
 Layout
 ------
+Holdings:    manual ticker/weight editor (add, remove, CSV import) — persisted
+             to data/user_prefs.json under the "portfolio" key
 Header row:  date range inputs + Refresh button + last-analysed timestamp
 Factor row:  β_mkt · β_smb · β_hml · R² · Alpha metric cards
 Summary:     plain-English interpretation from the factor engine
@@ -14,13 +16,10 @@ Data flow
 ---------
 Results are expensive (~20s on first run — network + OLS).  They are cached
 to data/portfolio_analysis_cache.json and served from there on subsequent
-page loads.  The Refresh button reruns the analysis and overwrites the cache.
-
-PLACEHOLDER — Edit holdings
----------------------------
-# TODO: "Edit holdings" section — allow updating portfolio weights without
-# touching factor_engine/portfolio.py directly. Planned as a future polish
-# item. Currently weights are hardcoded in factor_engine/portfolio.py.
+page loads.  Editing holdings, clicking Refresh, or clicking Run Portfolio
+Analysis reruns the analysis and overwrites the cache. If the cache was
+computed for a different set of holdings than currently saved, it's treated
+as stale and recomputed automatically.
 """
 from __future__ import annotations
 
@@ -29,6 +28,31 @@ import pandas as pd
 import altair as alt
 
 import dashboard.cache as analysis_cache
+import dashboard.holdings as holdings_module
+import dashboard.prefs as prefs_module
+
+# ---------------------------------------------------------------------------
+# Holdings state
+# ---------------------------------------------------------------------------
+
+def _save_holdings(holdings: list[dict]) -> None:
+    p = prefs_module.load()
+    p["portfolio"] = holdings
+    prefs_module.save(p)
+
+
+if "pf_holdings" not in st.session_state:
+    st.session_state.pf_holdings = prefs_module.load()["portfolio"]
+
+
+def _current_weights_normalized() -> tuple[dict[str, float], bool]:
+    """Return (normalized weights dict, was_normalized) for the current holdings."""
+    w = holdings_module.weights_dict(st.session_state.pf_holdings)
+    total = sum(w.values())
+    if total <= 0 or abs(total - 1.0) < 1e-6:
+        return w, False
+    return holdings_module.normalize_weights_dict(w), True
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -72,12 +96,12 @@ def _render_stress_card(scenario: dict) -> None:
         )
 
 
-def _run_analysis(start: str, end: str) -> dict:
+def _run_analysis(start: str, end: str, weights: dict[str, float]) -> dict:
     """Run the full factor analysis and stress tests. Returns a merged results dict."""
     from factor_engine.portfolio import analyze_portfolio
     from factor_engine.stress_test import run_stress_tests
 
-    results = analyze_portfolio(start=start, end=end)
+    results = analyze_portfolio(start=start, end=end, weights=weights)
     h = results["headline"]
     stress = run_stress_tests(
         beta_market=h["beta_market"],
@@ -107,28 +131,193 @@ with st.sidebar:
         )
 
 
+st.header(":material/bar_chart: Portfolio")
+
+
+# ---------------------------------------------------------------------------
+# Holdings editor
+# ---------------------------------------------------------------------------
+
+st.subheader("Holdings")
+
+with st.form("add_position_form", clear_on_submit=True, border=False):
+    c1, c2, c3 = st.columns([3, 1, 1])
+    with c1:
+        new_ticker = st.text_input(
+            "Ticker", key="pf_new_ticker", label_visibility="collapsed",
+            placeholder="Ticker (e.g. AAPL)",
+        )
+    with c2:
+        new_weight = st.number_input(
+            "Weight %", key="pf_new_weight", label_visibility="collapsed",
+            min_value=0.0, max_value=100.0, value=5.0, step=0.1, format="%.1f",
+        )
+    with c3:
+        add_clicked = st.form_submit_button(":material/add: Add Position", width="stretch")
+
+if add_clicked:
+    ticker = (new_ticker or "").strip().upper()
+    existing_tickers = {h["ticker"] for h in st.session_state.pf_holdings}
+    if not ticker:
+        st.error("Enter a ticker symbol.", icon=":material/error:")
+    elif ticker in existing_tickers:
+        st.error(f"{ticker} is already in your portfolio.", icon=":material/error:")
+    elif len(st.session_state.pf_holdings) >= holdings_module.MAX_POSITIONS:
+        st.error(
+            f"Maximum {holdings_module.MAX_POSITIONS} positions reached.",
+            icon=":material/error:",
+        )
+    elif not (holdings_module.MIN_WEIGHT_PCT <= new_weight <= holdings_module.MAX_WEIGHT_PCT):
+        st.error(
+            f"Weight must be between {holdings_module.MIN_WEIGHT_PCT}% and "
+            f"{holdings_module.MAX_WEIGHT_PCT}%.",
+            icon=":material/error:",
+        )
+    else:
+        with st.spinner(f"Validating {ticker}…"):
+            result = holdings_module.lookup_ticker(ticker)
+        if result["valid"]:
+            st.session_state.pf_holdings.append({"ticker": ticker, "weight": new_weight / 100})
+            _save_holdings(st.session_state.pf_holdings)
+            st.success(f"Added {ticker} — {result['name']}", icon=":material/check_circle:")
+            st.rerun()
+        else:
+            st.error(result["error"], icon=":material/error:")
+
+if st.session_state.pf_holdings:
+    hdr = st.columns([2, 4, 2, 1])
+    hdr[0].caption("**Ticker**")
+    hdr[1].caption("**Company**")
+    hdr[2].caption("**Weight %**")
+    hdr[3].caption("")
+    for h in list(st.session_state.pf_holdings):
+        ticker = h["ticker"]
+        info = holdings_module.lookup_ticker(ticker)
+        row = st.columns([2, 4, 2, 1])
+        row[0].write(ticker)
+        row[1].write(info["name"] if info["valid"] and info["name"] else ":gray[unknown]")
+        row[2].write(f"{h['weight'] * 100:.2f}%")
+        if row[3].button(":material/delete:", key=f"remove_{ticker}", help=f"Remove {ticker}"):
+            st.session_state.pf_holdings = [
+                x for x in st.session_state.pf_holdings if x["ticker"] != ticker
+            ]
+            _save_holdings(st.session_state.pf_holdings)
+            st.rerun()
+
+    total_pct = holdings_module.total_weight_pct(st.session_state.pf_holdings)
+    if abs(total_pct - 100) < 0.01:
+        st.markdown(f":green[**Total weight: {total_pct:.2f}%**]")
+    elif abs(total_pct - 100) <= 2:
+        st.markdown(f":orange[**Total weight: {total_pct:.2f}%**]  ·  :gray[will be normalized to 100% on run]")
+    else:
+        st.markdown(f":red[**Total weight: {total_pct:.2f}%**]  ·  :gray[will be normalized to 100% on run]")
+else:
+    st.info("Add at least one position to run a factor analysis.", icon=":material/info:")
+
+with st.expander("Import from CSV", icon=":material/upload:"):
+    st.download_button(
+        "Download CSV template",
+        data=holdings_module.csv_template_bytes(),
+        file_name="portfolio_template.csv",
+        mime="text/csv",
+    )
+    st.caption(
+        "Two columns: ticker, weight. Weight may be a decimal (0.2437) or a "
+        "percentage (24.37) — the format is detected automatically. Importing "
+        "replaces your current holdings table."
+    )
+    uploaded = st.file_uploader(
+        "Upload ticker/weight CSV", type=["csv"], key="pf_csv_upload",
+        label_visibility="collapsed",
+    )
+
+    if uploaded is not None:
+        rows, errors = holdings_module.parse_csv(uploaded.getvalue())
+        if errors:
+            for e in errors:
+                st.error(e, icon=":material/error:")
+        else:
+            with st.spinner(f"Validating {len(rows)} ticker(s)…"):
+                validated, invalid = [], []
+                for r in rows:
+                    info = holdings_module.lookup_ticker(r["ticker"])
+                    if info["valid"]:
+                        validated.append({**r, "name": info["name"]})
+                    else:
+                        invalid.append(r["ticker"])
+
+            preview_df = pd.DataFrame([
+                {
+                    "Ticker": r["ticker"],
+                    "Company": r.get("name", "—"),
+                    "Weight %": f"{r['weight'] * 100:.2f}%",
+                    "Status": "✓ valid" if r["ticker"] not in invalid else "✗ not found",
+                }
+                for r in rows
+            ])
+            st.dataframe(preview_df, hide_index=True, width="stretch")
+
+            if invalid:
+                st.error(
+                    "Ticker(s) not found — please check the symbol and try again: "
+                    + ", ".join(invalid),
+                    icon=":material/error:",
+                )
+            elif st.button("Apply import", type="primary", key="pf_apply_import"):
+                st.session_state.pf_holdings = [
+                    {"ticker": r["ticker"], "weight": r["weight"]} for r in validated
+                ]
+                _save_holdings(st.session_state.pf_holdings)
+                st.success(f"Imported {len(validated)} position(s).", icon=":material/check_circle:")
+                st.rerun()
+
+run_clicked = st.button(
+    ":material/play_arrow: Run Portfolio Analysis",
+    type="primary",
+    disabled=not st.session_state.pf_holdings,
+)
+
+
 # ---------------------------------------------------------------------------
 # Load or run analysis
 # ---------------------------------------------------------------------------
 
-st.header(":material/bar_chart: Portfolio")
+trigger_run = refresh or run_clicked
+
+if trigger_run and not st.session_state.pf_holdings:
+    st.error("Add at least one position before running analysis.", icon=":material/error:")
+    st.stop()
 
 cached = analysis_cache.load()
+current_weights_normalized, _ = _current_weights_normalized()
+cache_is_current = cached is not None and holdings_module.weights_match(
+    cached.get("raw_weights"), current_weights_normalized
+)
 
-if refresh:
+if trigger_run:
+    weights, was_normalized = _current_weights_normalized()
     with st.spinner("Running factor analysis and stress tests (~20 seconds)…"):
         try:
-            data = _run_analysis(start_date, end_date)
+            data = _run_analysis(start_date, end_date, weights)
+            if was_normalized:
+                st.caption(":gray[Weights normalized to 100%]")
             st.success("Analysis complete.", icon=":material/check_circle:")
         except Exception as e:
             st.error(f"Analysis failed: {e}", icon=":material/error:")
             st.stop()
-elif cached is not None:
+elif cache_is_current:
     data = cached
 else:
+    if not st.session_state.pf_holdings:
+        st.info(
+            "Add at least one position above, then click **Run Portfolio Analysis**.",
+            icon=":material/info:",
+        )
+        st.stop()
+    weights, was_normalized = _current_weights_normalized()
     with st.spinner("Running factor analysis on first load (~20 seconds)…"):
         try:
-            data = _run_analysis(start_date, end_date)
+            data = _run_analysis(start_date, end_date, weights)
             st.rerun()
         except Exception as e:
             st.error(f"Analysis failed: {e}", icon=":material/error:")
@@ -138,7 +327,7 @@ else:
 age = analysis_cache.age_str(data)
 st.caption(
     f"Analysis period: {data['start']} → {data['end']}  ·  Last run: {age}  ·  "
-    f"Click **Refresh analysis** in the sidebar to update."
+    f"Click **Refresh analysis** in the sidebar or **Run Portfolio Analysis** above to update."
 )
 
 
@@ -242,11 +431,17 @@ st.dataframe(
         "R²":           st.column_config.NumberColumn(format="%.4f"),
     },
 )
+_intl_tickers = [r["ticker"] for r in per_holding if "intl" in r["factor_basis"]]
+_intl_note = (
+    f" {', '.join(_intl_tickers)} {'uses' if len(_intl_tickers) == 1 else 'use'} US FF3 factors "
+    "as an approximation (international ETF — labeled in Factor basis column)."
+    if _intl_tickers else ""
+)
 st.caption(
     "Weighted betas (Wtd β) = individual ticker beta × portfolio weight. "
     "Their sum approximates — but won't exactly match — the headline portfolio betas, "
-    "because independent regressions share the same factor matrix but not the same residual structure. "
-    "VXUS uses US FF3 factors as an approximation (international ETF — labeled in Factor basis column)."
+    "because independent regressions share the same factor matrix but not the same residual structure."
+    + _intl_note
 )
 
 

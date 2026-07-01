@@ -83,8 +83,11 @@ get_db()
 
 # Pre-warm portfolio FF3 betas so the Factor Profile tab is always instant.
 # cache_resource means this runs exactly once per server process; subsequent
-# page loads (and all other sessions) get an immediate cache hit.
-from dashboard.factor import portfolio_ff3_betas as _prewarm_ff3
+# page loads (and all other sessions) get an immediate cache hit. Weights come
+# from the user's saved portfolio (data/user_prefs.json) so the Signals page's
+# "how would this change my exposure" callouts compare against the portfolio
+# the user actually owns, not a hardcoded stand-in.
+from dashboard.factor import current_portfolio_betas as _prewarm_ff3
 
 _warmup_slot = st.sidebar.empty()
 _warmup_slot.caption(":gray[Initializing factor engine…]")

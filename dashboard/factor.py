@@ -2,16 +2,22 @@
 Factor engine integration for the dashboard.
 
 Public functions:
-    portfolio_ff3_betas()   — portfolio headline FF3 betas (cache_resource: once per process)
-    ticker_ff3_profile(t)   — single-ticker FF3 OLS regression (cache_data: 24h)
+    portfolio_ff3_betas(weights)   — portfolio headline FF3 betas for given weights (cache_resource)
+    current_portfolio_betas()      — portfolio_ff3_betas() for the user's saved portfolio (data/user_prefs.json)
+    ticker_ff3_profile(t)          — single-ticker FF3 OLS regression (cache_data: 24h)
 
 portfolio_ff3_betas() is a cache_resource singleton so it runs exactly once per
 server process regardless of how many sessions are open.  pre-warming it in
 streamlit_app.py ensures the Factor Profile tab is always instant.
 
 Fast path for portfolio betas: reads data/portfolio_analysis_cache.json when the
-Portfolio page has already run the analysis.  Slow path: calls analyze_portfolio()
-directly (~10–30s, downloads non-cached ticker CSVs once).
+Portfolio page has already run the analysis *for the same weights*.  Slow path:
+calls analyze_portfolio() directly (~10–30s, downloads non-cached ticker CSVs
+once).
+
+Portfolio weights come from the user's saved holdings (data/user_prefs.json),
+not a hardcoded constant — see streamlit_app.py's prewarm call — so this
+reflects whatever portfolio the user actually owns.
 """
 from __future__ import annotations
 
@@ -22,20 +28,36 @@ _ANALYSIS_END   = "2024-12-31"
 
 
 @st.cache_resource(show_spinner=False)
-def portfolio_ff3_betas() -> dict | None:
+def portfolio_ff3_betas(weights: dict[str, float] | None = None) -> dict | None:
     """
-    Portfolio headline FF3 betas.  Runs once per server process.
+    Portfolio headline FF3 betas for the given weights.  Cached per distinct
+    weights dict (once per server process for that portfolio).
+
+    Parameters
+    ----------
+    weights : ticker -> raw weight dict. Defaults to the hardcoded example
+        portfolio (factor_engine.portfolio.WEIGHTS) when omitted.
 
     Returns the same dict structure as factor_engine.portfolio._run_ff3_ols():
         beta_market, beta_smb, beta_hml, alpha_annualised, r_squared,
         t_stat_market, t_stat_smb, t_stat_hml, n_obs, start, end
     Returns None on failure (missing dependencies, network error, etc.).
     """
-    # Fast path — Portfolio page already computed and saved this
+    from dashboard.holdings import normalize_weights_dict
+    from factor_engine.portfolio import _RAW_WEIGHTS as _DEFAULT_WEIGHTS
+    weights = weights if weights is not None else dict(_DEFAULT_WEIGHTS)
+    # Normalize here so this always compares/caches against the same canonical
+    # representation the Portfolio page uses (dashboard.cache stores whatever
+    # was passed to analyze_portfolio, which the Portfolio page always
+    # normalizes before calling).
+    weights = normalize_weights_dict(weights)
+
+    # Fast path — Portfolio page already computed and saved this exact portfolio
     try:
         from dashboard.cache import load as _load_disk
+        from dashboard.holdings import weights_match
         cached = _load_disk()
-        if cached and cached.get("headline"):
+        if cached and cached.get("headline") and weights_match(cached.get("raw_weights"), weights):
             return cached["headline"]
     except Exception:
         pass
@@ -43,7 +65,7 @@ def portfolio_ff3_betas() -> dict | None:
     # Slow path — download and compute; also saves disk cache for next time
     try:
         from factor_engine.portfolio import analyze_portfolio
-        result = analyze_portfolio(start=_ANALYSIS_START, end=_ANALYSIS_END)
+        result = analyze_portfolio(start=_ANALYSIS_START, end=_ANALYSIS_END, weights=weights)
         try:
             from dashboard.cache import save as _save_disk
             _save_disk(result, [])   # stress_tests populated by Portfolio page later
@@ -52,6 +74,14 @@ def portfolio_ff3_betas() -> dict | None:
         return result["headline"]
     except Exception:
         return None
+
+
+def current_portfolio_betas() -> dict | None:
+    """portfolio_ff3_betas() for the user's currently saved portfolio (data/user_prefs.json)."""
+    from dashboard.holdings import weights_dict
+    from dashboard.prefs import load as _load_prefs
+    weights = weights_dict(_load_prefs()["portfolio"])
+    return portfolio_ff3_betas(weights)
 
 
 @st.cache_data(ttl=86400, show_spinner=False)

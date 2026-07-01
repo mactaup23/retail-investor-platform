@@ -34,7 +34,7 @@ from dashboard.db import (
     watchlist_add,
     watchlist_remove,
 )
-from dashboard.factor import portfolio_ff3_betas, ticker_ff3_profile
+from dashboard.factor import current_portfolio_betas, ticker_ff3_profile
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -287,7 +287,7 @@ def _portfolio_impact_line(ticker: str) -> str | None:
     or None if factor data is unavailable.
     """
     profile = ticker_ff3_profile(ticker)
-    port    = portfolio_ff3_betas()
+    port    = current_portfolio_betas()
     if profile is None or port is None:
         return None
 
@@ -1205,7 +1205,7 @@ def _render_factor_tab(ticker: str) -> None:
     st.divider()
     st.markdown("**Portfolio Comparison**")
 
-    port = portfolio_ff3_betas()
+    port = current_portfolio_betas()
     if port is None:
         st.caption(":gray[Portfolio betas not available — run the Portfolio page to compute them.]")
         return
