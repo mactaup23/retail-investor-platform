@@ -319,3 +319,68 @@ def load_fund_skills() -> list[dict]:
         d["fund_bucket"] = r.fund.bucket
         result.append(d)
     return result
+
+
+# ---------------------------------------------------------------------------
+# Signal backtest (Module 4 extension)
+# ---------------------------------------------------------------------------
+
+@st.cache_data(ttl="10m", max_entries=5)
+def load_backtest() -> dict:
+    """
+    Run the full signal backtest and return plain-dict summary + per-quarter rows.
+
+    Structure:
+        {
+            "quarter_ics": [{period, horizon_days, universe, n_candidates,
+                              n_obs, coverage_pct, ic}, ...],
+            "horizons": [{horizon_days, universe, n_quarters, mean_ic, std_ic,
+                          t_stat, hit_rate, rolling_4q, rolling_8q}, ...],
+        }
+    """
+    from smart_money.backtest import run_backtest, summarize
+
+    quarter_ics = run_backtest()
+    summary = summarize(quarter_ics)
+
+    return {
+        "quarter_ics": [
+            {
+                "period":        str(q.period),
+                "horizon_days":  q.horizon_days,
+                "universe":      q.universe,
+                "n_candidates":  q.n_candidates,
+                "n_obs":         q.n_obs,
+                "coverage_pct":  q.coverage_pct,
+                "ic":            q.ic,
+            }
+            for q in quarter_ics
+        ],
+        "horizons": [
+            {
+                "horizon_days": h.horizon_days,
+                "universe":     h.universe,
+                "n_quarters":   h.n_quarters,
+                "mean_ic":      h.mean_ic,
+                "std_ic":       h.std_ic,
+                "t_stat":       h.t_stat,
+                "hit_rate":     h.hit_rate,
+                "rolling_4q":   [(str(p), v) for p, v in h.rolling_4q],
+                "rolling_8q":   [(str(p), v) for p, v in h.rolling_8q],
+            }
+            for h in summary.horizons
+        ],
+    }
+
+
+@st.cache_data(ttl="10m", max_entries=20)
+def load_backtest_observations(period_str: str, horizon_days: int, universe: str) -> list[dict]:
+    """Per-cusip score/forward_return pairs for one (period, horizon, universe) cell."""
+    from smart_money.backtest import compute_quarter_ic
+
+    period = datetime.date.fromisoformat(period_str)
+    q = compute_quarter_ic(period, horizon_days, universe)
+    return [
+        {"cusip": o.cusip, "ticker": o.ticker, "score": o.score, "forward_return": o.forward_return}
+        for o in q.observations
+    ]
