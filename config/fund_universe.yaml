@@ -8,7 +8,7 @@ meta:
     CIK numbers marked cik_status: verify require EDGAR lookup before pipeline use.
     Funds with filing_flags require special handling during data ingestion.
     Conditional funds (conditional: true) must pass their threshold check before inclusion.
-  total_funds: 38          # 38 confirmed + 1 conditional (Situational Awareness LP)
+  total_funds: 41          # 41 confirmed + 1 conditional (Situational Awareness LP)
   edgar_search_url: "https://efts.sec.gov/LATEST/search-index?forms=13F-HR"
   filing_threshold_usd: 100_000_000
 
@@ -259,6 +259,48 @@ funds:
       Extremely concentrated value; large long-only book; rarely discussed in
       financial media despite AUM — exactly the kind of less-covered fund that
       rewards inclusion.
+
+  - name: "Dodge & Cox"
+    manager: "Investment Committee"
+    bucket: fundamental_value
+    aum_tier: "very_large"      # ~$350B+
+    cik: "200217"                # verified via EDGAR company search, confirmed 13F-HR filer
+    cik_status: confirmed
+    filing_flags: []
+    notes: >
+      Patient, long-horizon value run by committee rather than a single star PM;
+      near-complete 13F disclosure since the book is essentially long-only; very
+      long holding periods with low turnover. Stylistically about as far as
+      possible from the Tiger Cub long/short growth names — a genuinely
+      different lens on the same market.
+
+  - name: "Yacktman Asset Management"
+    manager: "Stephen Yacktman / Jason Subotky"
+    bucket: fundamental_value
+    aum_tier: "small_mid"       # ~$5-8B
+    cik: "905567"                 # verified via EDGAR company search, confirmed 13F-HR filer
+    cik_status: confirmed
+    filing_flags: []
+    notes: >
+      Concentrated defensive value, typically 20-30 positions, with a heavy
+      consumer-staples orientation — the opposite of the platform's current
+      tech-growth-heavy long/short tilt. Convergence between Yacktman and a
+      Tiger Cub on any single name is a meaningfully stronger cross-style
+      signal than either alone.
+
+  - name: "First Eagle Investment Management"
+    manager: "Matthew McLennan / Kimball Brooker"
+    bucket: fundamental_value
+    aum_tier: "large"           # ~$130B+
+    cik: "1325447"                # verified via EDGAR company search, confirmed 13F-HR filer
+    cik_status: confirmed
+    filing_flags: []
+    notes: >
+      Global value with an explicit downside-protection mandate; holds physical
+      gold alongside equities as a portfolio hedge; favors asset-heavy,
+      tangible-book-value businesses trading below intrinsic value. ADR and
+      non-US holdings add genuine international perspective the rest of the
+      universe lacks.
 
   # ──────────────────────────────────────────────
   # BUCKET 3: QUANT / SYSTEMATIC

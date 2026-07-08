@@ -144,11 +144,12 @@ st.subheader("Module 3 — EDGAR ingestion and fund skill scoring")
 
 st.markdown("""
 **13F universe**
-38 confirmed hedge funds across four strategy buckets:
+41 confirmed hedge funds across four strategy buckets:
 - Long/short equity: Viking Global, Lone Pine, Coatue, Tiger Global, Maverick, D1 Capital,
   Glenview, Whale Rock, Senator Investment, Light Street
 - Fundamental value: Pershing Square, Third Point, Baupost, ValueAct, Starboard, Greenlight,
-  Horizon Kinetics, Ariel Investments, Southeastern, SPO Advisory
+  Horizon Kinetics, Ariel Investments, Southeastern, SPO Advisory, Dodge & Cox, Yacktman
+  Asset Management, First Eagle Investment Management
 - Quant/systematic: Renaissance, Two Sigma, DE Shaw, AQR, Acadian, PDT Partners
 - Sector specialist: Altimeter, Dragoneer, Greenoaks (technology); Baker Bros, OrbiMed,
   RA Capital (healthcare/biotech); Kayne Anderson, SailingStone (energy); Corsair, Brahman,
