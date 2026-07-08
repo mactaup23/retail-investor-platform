@@ -93,7 +93,7 @@ MIN_TAX vs LIFO nuance: LIFO can numerically show lower taxes when disallowed-lo
 
 ## Configuration
 
-- Fund universe: config/fund_universe.yaml — 38 active + 1 conditional funds across 4 strategy buckets
+- Fund universe: config/fund_universe.yaml — 41 active + 1 conditional funds across 4 strategy buckets
 - API keys in .env: ANTHROPIC_API_KEY (NLP scorer), OPENFIGI_API_KEY (CUSIP resolution)
 - EDGAR rate limit: 0.12s minimum between requests enforced in edgar.py
 - data/ is gitignored — DB, cached CSVs, price data never commit
