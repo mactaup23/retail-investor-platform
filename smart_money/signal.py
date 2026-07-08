@@ -411,8 +411,12 @@ def persist(results: list[SignalResult]) -> int:
         for r in results
     ]
 
+    # SQLite limit: 32766 bound variables per statement.
+    # FinalSignal has 17 fields → max ~1927 rows per batch.
+    _CHUNK = 1700
     with db.atomic():
-        FinalSignal.replace_many(rows).execute()
+        for i in range(0, len(rows), _CHUNK):
+            FinalSignal.replace_many(rows[i : i + _CHUNK]).execute()
 
     return len(rows)
 
