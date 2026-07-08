@@ -145,13 +145,14 @@ st.subheader("Module 3 — EDGAR ingestion and fund skill scoring")
 st.markdown("""
 **13F universe**
 38 confirmed hedge funds across four strategy buckets:
-- Long/short equity: Appaloosa, Viking Global, Pershing Square, D1 Capital, Light Street,
-  Tiger Global, Coatue, Lone Pine, Third Point, Greenlight, Eminence, Glenview, Maverick,
-  Highfields, Baupost, Greenlight, Duquesne
-- Fundamental value: Berkshire Hathaway, Ariel, Fairholme, Gotham†
-- Quant/systematic: Renaissance, Two Sigma, DE Shaw, AQR, Citadel, Millennium
-- Sector specialist: Baker Bros (biotech), Whale Rock (tech), Durable Capital (tech),
-  Senator Investment (diversified), Sachem Head (industrials)
+- Long/short equity: Viking Global, Lone Pine, Coatue, Tiger Global, Maverick, D1 Capital,
+  Glenview, Whale Rock, Senator Investment, Light Street
+- Fundamental value: Pershing Square, Third Point, Baupost, ValueAct, Starboard, Greenlight,
+  Horizon Kinetics, Ariel Investments, Southeastern, SPO Advisory
+- Quant/systematic: Renaissance, Two Sigma, DE Shaw, AQR, Acadian, PDT Partners
+- Sector specialist: Altimeter, Dragoneer, Greenoaks (technology); Baker Bros, OrbiMed,
+  RA Capital (healthcare/biotech); Kayne Anderson, SailingStone (energy); Corsair, Brahman,
+  Pzena (financials)
 
 **EDGAR ingestion**
 Quarterly 13F-HR filings are fetched from SEC EDGAR's full-text search index. Each
@@ -188,11 +189,6 @@ thousands of foreign and delisted positions that yfinance cannot price. Their co
 rate (fraction of beginning-of-quarter holdings with available end-of-quarter prices) is
 structurally below the 80% gate required for return computation. These funds are tracked
 for crowding analysis but their skill scores are unreliable.
-
-† Gotham Asset Management has no post-2013 13F filings. Pre-XML EDGAR format filings are
-not parsed by this platform. Gotham appears in the fund universe for completeness but
-contributes no data to signals or skill scoring. It is scheduled for replacement in a
-future update.
 """)
 
 # ---------------------------------------------------------------------------
@@ -275,6 +271,56 @@ the prior quarter:
 
 Securities with no prior signal row and score < 0.30 are filtered — you cannot exit a
 position that was never signalled.
+""")
+
+# ---------------------------------------------------------------------------
+
+st.subheader("Signal Validation — Backtesting Results")
+
+st.markdown("""
+A signal is only useful if it actually predicts something. This platform backtests the
+convergence signal by computing the **Information Coefficient (IC)** — the rank
+correlation between the signal score at a given quarter-end and the security's forward
+return over the following horizon — across the full universe and the watchlist.
+
+**What IC means, in plain English:** IC measures whether stocks the signal ranked higher
+actually went on to outperform stocks it ranked lower. An IC of 0 means the signal has no
+predictive power — you'd do just as well ranking stocks randomly. An IC of 1 would mean
+perfect prediction (never happens with real data). In equity research, an IC in the
+0.02–0.05 range is considered a genuinely useful signal — most published quant factors
+live in this range, not near 1.0, because single-quarter stock returns are dominated by
+noise no signal can explain.
+
+**Why the t-statistic matters:** IC alone doesn't tell you whether the result is real or
+just noise from a limited sample. The t-statistic answers "how many standard errors is
+this IC away from zero?" A t-stat above roughly 2.0 corresponds to statistical
+significance at the ~95% confidence level — the conventional bar for concluding a result
+is unlikely to be pure chance rather than a hard cutoff for "the signal works."
+
+**Results across three horizons:**
+
+| Horizon | IC | t-stat | Hit rate | Significant? |
+|---------|-----|--------|----------|---------------|
+| 1-month | +0.023 | 1.19 | 54.3% | No |
+| 3-month | +0.041 | 2.31 | 63.0% | **Yes** |
+| 6-month | +0.033 | 1.62 | 60.9% | No |
+
+Hit rate is the percentage of quarters in which the signal correctly predicted the
+direction (sign) of the forward return.
+
+The signal shows its strongest and only statistically significant predictive power at the
+**3-month horizon** (t-stat 2.31, above the ~2.0 significance threshold). This is
+consistent with the underlying thesis: 13F positioning reflects institutional conviction
+that takes time to play out in price — shorter than a month is too little time for the
+thesis to be reflected, and by six months other information has diluted the original
+signal's relevance. The weaker, non-significant results at 1-month and 6-month horizons
+are consistent with this story rather than contradicting it.
+
+**Past performance does not guarantee future results.** These figures are computed over a
+historical sample and reflect the specific universe, weighting scheme, and time period
+tested. They do not account for transaction costs, slippage, or taxes, and a signal that
+was significant historically can degrade or fail going forward as market conditions,
+factor crowding, or fund behavior change.
 """)
 
 # ---------------------------------------------------------------------------

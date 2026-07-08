@@ -114,7 +114,6 @@ TaxLot
 - 13F data is long-only and 45-day lagged. No shorts, no futures, no non-US positions. Bearish-leaning signals come from trims/exits not actual short positions.
 - Quant fund coverage ceiling is structural. Renaissance, Two Sigma, DE Shaw, AQR hold thousands of foreign/delisted positions yfinance cannot price. Will remain unreliable regardless of pipeline re-runs.
 - Baupost filing completeness: historically requests confidential treatment on portions of 13F. Disclosed book is materially incomplete.
-- Gotham Asset Management has zero post-2013 filings. Pre-XML era only. Flagged for replacement in polish pass.
 - NLP score of 0.000 (e.g. META) means insufficient language shift detected, not a negative signal. Large-cap IR teams use formulaic MD&A language.
 - EDGAR value field empirical finding: SEC spec says thousands, empirically raw dollars. See edgar.py comments.
 
@@ -137,7 +136,7 @@ TaxLot
 6. Full CIK re-verification pass across all 38 funds
 7. Fund universe expansion — long-only institutional managers (Norges Bank, Capital Group, T. Rowe Price, Wellington, endowments)
 8. Additional signal sources — Schedule 13D/13G, Form 4 insider transactions, active ETF daily holdings
-9. Replace Gotham Asset Management with different fundamental value fund
+9. Completed — replaced with Ariel Investments (CIK 936753)
 10. Tax-lot engine enhancements — cross-account wash-sale detection, NYC state/city tax rates, tax-efficient rebalancing optimization
 11. Dashboard error handling and graceful degradation
 12. README and methodology documentation

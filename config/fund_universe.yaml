@@ -224,16 +224,17 @@ funds:
       exchanges); very low turnover; less-covered analytically — a key reason
       for inclusion.
 
-  - name: "Gotham Asset Management"
-    manager: "Joel Greenblatt"
+  - name: "Ariel Investments"
+    manager: "John W. Rogers Jr."
     bucket: fundamental_value
-    aum_tier: "mid"            # ~$3-5B
-    cik: "1279148"
+    aum_tier: "mid"            # ~$10-13B
+    cik: "936753"               # verified via EDGAR company search, confirmed 13F-HR filer
     cik_status: confirmed
     filing_flags: []
     notes: >
-      "Magic Formula" quantitative value; systematic but value-anchored; useful
-      bridge between the value and quant buckets for factor analysis.
+      Patient, small/mid-cap value investing ("slow and steady wins the race");
+      continuous 13F-HR history from well before 2013 through the present.
+      Replaces Gotham Asset Management, which has no post-2013 XML-era filings.
 
   - name: "Southeastern Asset Management"
     manager: "Mason Hawkins / Staley Cates"

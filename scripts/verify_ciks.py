@@ -185,7 +185,7 @@ SEARCH_HINTS: dict[str, list[str]] = {
     "ValueAct Capital Management":  ["ValueAct Capital", "Value Act Capital"],
     "Starboard Value":              ["Starboard Value LP"],
     "Horizon Kinetics":             ["Horizon Kinetics LLC"],
-    "Gotham Asset Management":      ["Gotham Asset", "Gotham Capital"],
+    "Ariel Investments":            ["Ariel Investments LLC", "Ariel Capital Management"],
     "Southeastern Asset Management":["Southeastern Asset"],
     "SPO Advisory Corp":            ["SPO Advisory", "SPO Partners"],
     "D.E. Shaw & Co.":              ["DE Shaw", "D E Shaw"],
