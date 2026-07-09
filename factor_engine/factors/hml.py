@@ -28,14 +28,16 @@ HML factor is approximately 0.80–0.88 (lower than the ~0.85–0.90 we see for 
 IWM/IWB-based SMB series).  This is appropriate for a retail investor platform but
 should be noted when comparing factor loadings to academic benchmarks.
 
-Factor loading regression (Fama-French 3-factor model)
----------------------------------------------------------
-compute_factor_loadings() fits a joint 3-factor OLS:
+Factor loading regression (Fama-French-Carhart 4-factor model)
+------------------------------------------------------------------
+compute_factor_loadings() fits a joint 4-factor OLS:
 
-    r_i − r_f = α + β_mkt·(Mkt-RF) + β_smb·SMB + β_hml·HML + ε
+    r_i − r_f = α + β_mkt·(Mkt-RF) + β_smb·SMB + β_hml·HML + β_mom·MOM + ε
 
-All three betas are estimated in a single regression.  Running separate or paired
-regressions would omit correlated regressors and bias all estimates.
+All four betas are estimated in a single regression.  Running separate or paired
+regressions would omit correlated regressors and bias all estimates.  See
+factor_engine/factors/mom.py for the momentum factor construction and its
+ETF-proxy caveats.
 """
 
 import pandas as pd
@@ -44,6 +46,7 @@ from statsmodels.tools import add_constant
 
 from factor_engine.data_loader import load_returns
 from factor_engine.factors.market import build_market_factor
+from factor_engine.factors.mom import build_mom_factor
 from factor_engine.factors.smb import build_smb_factor
 
 VALUE_LARGE_ETF  = "IWD"   # iShares Russell 1000 Value
@@ -79,9 +82,10 @@ def compute_factor_loadings(
     market_factor: pd.DataFrame | None = None,
     smb_factor: pd.DataFrame | None = None,
     hml_factor: pd.DataFrame | None = None,
+    mom_factor: pd.DataFrame | None = None,
 ) -> dict:
     """
-    Estimate a stock's Fama-French 3-factor loadings via joint OLS.
+    Estimate a stock's Fama-French-Carhart 4-factor loadings via joint OLS.
 
     Parameters
     ----------
@@ -93,14 +97,16 @@ def compute_factor_loadings(
         Columns: small_return, large_return, smb.
     hml_factor : optional pre-built HML factor DataFrame
         Columns: value_return, growth_return, hml.
+    mom_factor : optional pre-built MOM factor DataFrame
+        Columns: momentum_return, benchmark_return, mom.
 
     Returns
     -------
     dict with keys:
-        ticker, beta_market, beta_smb, beta_hml,
+        ticker, beta_market, beta_smb, beta_hml, beta_mom,
         alpha_annualised, r_squared,
-        t_stat_market, t_stat_smb, t_stat_hml,
-        p_value_market, p_value_smb, p_value_hml,
+        t_stat_market, t_stat_smb, t_stat_hml, t_stat_mom,
+        p_value_market, p_value_smb, p_value_hml, p_value_mom,
         n_obs, start, end
     """
     if market_factor is None:
@@ -109,6 +115,8 @@ def compute_factor_loadings(
         smb_factor = build_smb_factor(start, end)
     if hml_factor is None:
         hml_factor = build_hml_factor(start, end)
+    if mom_factor is None:
+        mom_factor = build_mom_factor(start, end)
 
     stock_returns = load_returns([ticker], start, end)[ticker]
 
@@ -118,10 +126,11 @@ def compute_factor_loadings(
         "mkt_excess":   market_factor["market_excess"],
         "smb":          smb_factor["smb"],
         "hml":          hml_factor["hml"],
+        "mom":          mom_factor["mom"],
     }).dropna()
 
     stock_excess = combined["stock_return"] - combined["rf_rate"]
-    X = add_constant(combined[["mkt_excess", "smb", "hml"]])
+    X = add_constant(combined[["mkt_excess", "smb", "hml", "mom"]])
     model = OLS(stock_excess, X).fit()
 
     return {
@@ -129,14 +138,17 @@ def compute_factor_loadings(
         "beta_market":      round(model.params["mkt_excess"], 4),
         "beta_smb":         round(model.params["smb"], 4),
         "beta_hml":         round(model.params["hml"], 4),
+        "beta_mom":         round(model.params["mom"], 4),
         "alpha_annualised": round(model.params["const"] * 252, 4),
         "r_squared":        round(model.rsquared, 4),
         "t_stat_market":    round(model.tvalues["mkt_excess"], 4),
         "t_stat_smb":       round(model.tvalues["smb"], 4),
         "t_stat_hml":       round(model.tvalues["hml"], 4),
+        "t_stat_mom":       round(model.tvalues["mom"], 4),
         "p_value_market":   round(model.pvalues["mkt_excess"], 6),
         "p_value_smb":      round(model.pvalues["smb"], 6),
         "p_value_hml":      round(model.pvalues["hml"], 6),
+        "p_value_mom":      round(model.pvalues["mom"], 6),
         "n_obs":            int(model.nobs),
         "start":            start,
         "end":              end,

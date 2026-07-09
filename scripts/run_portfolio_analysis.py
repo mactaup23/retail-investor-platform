@@ -38,7 +38,7 @@ def fmt_pct(x: float, decimals: int = 2) -> str:
 
 def print_header(start: str, end: str) -> None:
     thick()
-    print(f"  PORTFOLIO FACTOR ANALYSIS  |  {start} → {end}  |  Fama-French 3-Factor Model")
+    print(f"  PORTFOLIO FACTOR ANALYSIS  |  {start} → {end}  |  Fama-French-Carhart 4-Factor Model")
     thick()
 
 
@@ -69,6 +69,7 @@ def print_headline(headline: dict) -> None:
     row("Market Beta  (β_mkt)",  f"{headline['beta_market']:+.4f}", headline["t_stat_market"], headline["p_value_market"])
     row("Size Beta    (β_smb)",  f"{headline['beta_smb']:+.4f}",    headline["t_stat_smb"],    headline["p_value_smb"])
     row("Value Beta   (β_hml)", f"{headline['beta_hml']:+.4f}",    headline["t_stat_hml"],    headline["p_value_hml"])
+    row("Mom Beta     (β_mom)",  f"{headline['beta_mom']:+.4f}",    headline["t_stat_mom"],    headline["p_value_mom"])
     blank()
     print(f"  {'Alpha (annualised)':<28} {pct(headline['alpha_annualised']):>8}")
     print(f"  {'R²':<28} {headline['r_squared']:>8.4f}")
@@ -97,8 +98,8 @@ def print_attribution(per_holding: list[dict]) -> None:
     # Header
     hdr = (
         f"  {'Ticker':<6} {'Weight':>7}  {'Factor Basis':<24}"
-        f"  {'β_mkt':>7}  {'β_smb':>7}  {'β_hml':>7}  {'R²':>6}"
-        f"  {'Wtd_β_mkt':>10}  {'Wtd_β_smb':>10}  {'Wtd_β_hml':>10}"
+        f"  {'β_mkt':>7}  {'β_smb':>7}  {'β_hml':>7}  {'β_mom':>7}  {'R²':>6}"
+        f"  {'Wtd_β_mkt':>10}  {'Wtd_β_smb':>10}  {'Wtd_β_hml':>10}  {'Wtd_β_mom':>10}"
     )
     print(hdr)
     rule("─")
@@ -106,9 +107,9 @@ def print_attribution(per_holding: list[dict]) -> None:
     for r in per_holding:
         print(
             f"  {r['ticker']:<6} {fmt_pct(r['weight']):>7}  {r['factor_basis']:<24}"
-            f"  {r['beta_market']:>+7.3f}  {r['beta_smb']:>+7.3f}  {r['beta_hml']:>+7.3f}"
+            f"  {r['beta_market']:>+7.3f}  {r['beta_smb']:>+7.3f}  {r['beta_hml']:>+7.3f}  {r['beta_mom']:>+7.3f}"
             f"  {r['r_squared']:>6.3f}"
-            f"  {r['wtd_beta_market']:>+10.4f}  {r['wtd_beta_smb']:>+10.4f}  {r['wtd_beta_hml']:>+10.4f}"
+            f"  {r['wtd_beta_market']:>+10.4f}  {r['wtd_beta_smb']:>+10.4f}  {r['wtd_beta_hml']:>+10.4f}  {r['wtd_beta_mom']:>+10.4f}"
         )
 
     rule("─")
@@ -118,11 +119,12 @@ def print_attribution(per_holding: list[dict]) -> None:
     sum_wmkt = sum(r["wtd_beta_market"]  for r in per_holding)
     sum_wsmb = sum(r["wtd_beta_smb"]     for r in per_holding)
     sum_whml = sum(r["wtd_beta_hml"]     for r in per_holding)
+    sum_wmom = sum(r["wtd_beta_mom"]     for r in per_holding)
 
     print(
         f"  {'ATTRIBUTION SUM':<6} {fmt_pct(sum_wt):>7}  {'(weighted avg)':24}"
-        f"  {'':>7}  {'':>7}  {'':>7}  {'':>6}"
-        f"  {sum_wmkt:>+10.4f}  {sum_wsmb:>+10.4f}  {sum_whml:>+10.4f}"
+        f"  {'':>7}  {'':>7}  {'':>7}  {'':>7}  {'':>6}"
+        f"  {sum_wmkt:>+10.4f}  {sum_wsmb:>+10.4f}  {sum_whml:>+10.4f}  {sum_wmom:>+10.4f}"
     )
     blank()
     print("  Note: attribution sums approximate headline betas. Small differences")
@@ -134,7 +136,7 @@ def print_attribution(per_holding: list[dict]) -> None:
     if intl:
         blank()
         for t in intl:
-            print(f"  * {t}: factor basis is US FF3 (international approximation).")
+            print(f"  * {t}: factor basis is US FF4 (international approximation).")
             print(f"    Developed-market ex-US co-moves with US factors at r ≈ 0.70–0.85.")
             print(f"    R² will be lower than for domestic ETFs; loadings are real but understated.")
 
@@ -171,7 +173,7 @@ def print_stress_tests(results: list[dict]) -> None:
     col_w = 14
     print(
         f"  {'Scenario':<30}  {'Mkt contrib':>{col_w}}  {'SMB contrib':>{col_w}}"
-        f"  {'HML contrib':>{col_w}}  {'Alpha contrib':>{col_w}}  {'RF contrib':>{col_w}}"
+        f"  {'HML contrib':>{col_w}}  {'Mom contrib':>{col_w}}  {'Alpha contrib':>{col_w}}  {'RF contrib':>{col_w}}"
     )
     rule("─")
 
@@ -181,6 +183,7 @@ def print_stress_tests(results: list[dict]) -> None:
             f"  {r['mkt_contrib'] * 100:>{col_w}.1f}%"
             f"  {r['smb_contrib'] * 100:>{col_w}.1f}%"
             f"  {r['hml_contrib'] * 100:>{col_w}.1f}%"
+            f"  {r['mom_contrib'] * 100:>{col_w}.1f}%"
             f"  {r['alpha_contrib'] * 100:>{col_w}.2f}%"
             f"  {r['rf_contrib'] * 100:>{col_w}.2f}%"
         )
@@ -205,12 +208,12 @@ def print_methodology() -> None:
     print("  METHODOLOGY")
     rule()
     print("  Factor source  : Official Fama-French daily series (Ken French data library)")
-    print("  Model          : FF3  →  r_i − r_f = α + β_mkt·(Mkt-RF) + β_smb·SMB + β_hml·HML")
+    print("  Model          : FF4  →  r_i − r_f = α + β_mkt·(Mkt-RF) + β_smb·SMB + β_hml·HML + β_mom·MOM")
     print("  Headline betas : OLS on combined (weighted-sum) portfolio return series")
     print("  Attribution    : Independent OLS per holding; weighted contributions shown")
     print("  Stress tests   : Estimated daily portfolio returns via headline betas × scenario")
     print("                   factor realizations; SPY actual return shown as benchmark")
-    print("  VXUS           : US FF3 factors used (see factor_engine/french_data.py for rationale)")
+    print("  VXUS           : US FF4 factors used (see factor_engine/french_data.py for rationale)")
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
@@ -236,6 +239,7 @@ def main() -> None:
         beta_market  = h["beta_market"],
         beta_smb     = h["beta_smb"],
         beta_hml     = h["beta_hml"],
+        beta_mom     = h["beta_mom"],
         alpha_daily  = h["alpha_daily"],
     )
     print_stress_tests(stress_results)

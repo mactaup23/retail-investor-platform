@@ -23,13 +23,13 @@ but should be noted when comparing factor loadings to academic benchmarks.
 
 Factor loading regression
 --------------------------
-Factor loading estimation uses the full Fama-French 3-factor OLS defined in
-factor_engine.factors.hml.compute_factor_loadings():
+Factor loading estimation uses the full Fama-French-Carhart 4-factor OLS defined
+in factor_engine.factors.hml.compute_factor_loadings():
 
-    r_i − r_f = α + β_mkt·(Mkt-RF) + β_smb·SMB + β_hml·HML + ε
+    r_i − r_f = α + β_mkt·(Mkt-RF) + β_smb·SMB + β_hml·HML + β_mom·MOM + ε
 
-All three betas are estimated jointly.  A paired 2-factor regression would omit
-HML — a correlated regressor — and bias both β_mkt and β_smb.
+All four betas are estimated jointly.  A paired regression omitting any one of
+them would bias the estimates of the rest via correlated regressors.
 """
 
 import pandas as pd

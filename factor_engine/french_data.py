@@ -1,24 +1,27 @@
 """
-Official Fama-French 3-factor data downloaded directly from Ken French's data library.
+Official Fama-French-Carhart 4-factor data downloaded directly from Ken French's
+data library (3-factor file plus a separately-published momentum file, merged).
 
-We use the published US daily series (Mkt-RF, SMB, HML, RF) rather than the
+We use the published US daily series (Mkt-RF, SMB, HML, Mom, RF) rather than the
 ETF-proxy series built in factor_engine/factors/.  The official series uses
 actual CRSP stock returns and proper B/M breakpoints — strictly more accurate
-than the IWM/IWB/IWD/IWF/IWN/IWO proxies.
+than the IWM/IWB/IWD/IWF/IWN/IWO/MTUM proxies.
 
 VXUS methodology note
 ---------------------
 VXUS tracks the FTSE Global All Cap ex-US index.  Ken French publishes *regional*
 daily factor series (Europe, Japan, Asia Pacific ex Japan) but not a combined
-"Developed ex-US" daily series.  Constructing one would require knowing VXUS's
-current geographic weights (≈37% Europe, 27% Pacific, 25% EM, 11% other), which
-vary over time and would introduce a time-varying factor matrix — complexity that
-buys little precision at daily frequency given that developed markets co-move with
-the US at r ≈ 0.70–0.85.  We therefore use the US FF3 factors for VXUS, label it
-"US FF3 (intl. approx.)" everywhere in output, and note the R² reduction (~0.60–
-0.75 vs. 0.95+ for domestic ETFs) so the user can calibrate their confidence.
+"Developed ex-US" daily series, and no regional momentum series at all.
+Constructing one would require knowing VXUS's current geographic weights (≈37%
+Europe, 27% Pacific, 25% EM, 11% other), which vary over time and would introduce
+a time-varying factor matrix — complexity that buys little precision at daily
+frequency given that developed markets co-move with the US at r ≈ 0.70–0.85.  We
+therefore use the US FF4 factors for VXUS, label it "US FF4 (intl. approx.)"
+everywhere in output, and note the R² reduction (~0.60–0.75 vs. 0.95+ for domestic
+ETFs) so the user can calibrate their confidence.
 
-Cache: data/french/us_ff3_daily.csv  (full history from 1926; immutable past data)
+Cache: data/french/us_ff3_daily.csv + us_mom_daily.csv (full history from 1926;
+immutable past data)
 Source: https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/data_library.html
 """
 
@@ -33,11 +36,26 @@ _BASE_URL = "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp"
 _CACHE_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "french")
 _US_FF3_ZIP = "F-F_Research_Data_Factors_daily_CSV.zip"
 _US_FF3_CACHE = os.path.join(_CACHE_DIR, "us_ff3_daily.csv")
+_US_MOM_ZIP = "F-F_Momentum_Factor_daily_CSV.zip"
+_US_MOM_CACHE = os.path.join(_CACHE_DIR, "us_mom_daily.csv")
+
+_FF3_COLUMN_MAP = {
+    "Mkt-RF": "mkt_excess",
+    "MKT-RF": "mkt_excess",
+    "SMB":    "smb",
+    "HML":    "hml",
+    "RF":     "rf",
+}
+_MOM_COLUMN_MAP = {
+    "Mom":   "mom",
+    "MOM":   "mom",
+    "WML":   "mom",  # some vintages of French's file label this column WML
+}
 
 
-def _download_us_ff3() -> str:
-    """Download the Ken French US daily FF3 ZIP and return raw CSV text."""
-    url = f"{_BASE_URL}/{_US_FF3_ZIP}"
+def _download_zip(zip_name: str) -> str:
+    """Download a Ken French daily ZIP and return raw CSV text."""
+    url = f"{_BASE_URL}/{zip_name}"
     resp = requests.get(url, timeout=90)
     resp.raise_for_status()
     with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
@@ -45,7 +63,7 @@ def _download_us_ff3() -> str:
         return zf.open(csv_name).read().decode("latin-1")
 
 
-def _parse_french_csv(raw: str) -> pd.DataFrame:
+def _parse_french_csv(raw: str, column_map: dict[str, str]) -> pd.DataFrame:
     """
     Parse Ken French's non-standard CSV.
 
@@ -96,13 +114,7 @@ def _parse_french_csv(raw: str) -> pd.DataFrame:
     df.index.name = "date"
     df = df.sort_index()
 
-    df = df.rename(columns={
-        "Mkt-RF": "mkt_excess",
-        "MKT-RF": "mkt_excess",
-        "SMB":    "smb",
-        "HML":    "hml",
-        "RF":     "rf",
-    })
+    df = df.rename(columns=column_map)
 
     # French publishes in percent; convert to decimal
     return df / 100.0
@@ -115,9 +127,22 @@ def _load_full_history() -> pd.DataFrame:
         df = pd.read_csv(_US_FF3_CACHE, index_col=0, parse_dates=True)
         df.index.name = "date"
         return df
-    raw = _download_us_ff3()
-    df = _parse_french_csv(raw)
+    raw = _download_zip(_US_FF3_ZIP)
+    df = _parse_french_csv(raw, _FF3_COLUMN_MAP)
     df.to_csv(_US_FF3_CACHE)
+    return df
+
+
+def _load_full_mom_history() -> pd.DataFrame:
+    """Return the full US daily momentum (UMD/Mom) factor history, fetching and caching if needed."""
+    os.makedirs(_CACHE_DIR, exist_ok=True)
+    if os.path.exists(_US_MOM_CACHE):
+        df = pd.read_csv(_US_MOM_CACHE, index_col=0, parse_dates=True)
+        df.index.name = "date"
+        return df
+    raw = _download_zip(_US_MOM_ZIP)
+    df = _parse_french_csv(raw, _MOM_COLUMN_MAP)
+    df.to_csv(_US_MOM_CACHE)
     return df
 
 
@@ -134,8 +159,38 @@ def get_ff3_daily(start: str, end: str) -> pd.DataFrame:
 
     Both US holdings and VXUS use this series; VXUS is labeled accordingly
     in output to signal reduced precision (see module docstring).
+
+    Kept 3-factor-only for callers that specifically want FF3; see
+    get_ff4_daily() for the Carhart 4-factor version (adds momentum).
     """
     df = _load_full_history()
     mask = (df.index >= pd.Timestamp(start)) & (df.index <= pd.Timestamp(end))
     cols = [c for c in ("mkt_excess", "smb", "hml", "rf") if c in df.columns]
+    return df.loc[mask, cols].copy()
+
+
+def get_ff4_daily(start: str, end: str) -> pd.DataFrame:
+    """
+    Return official Fama-French-Carhart 4-factor data for the given date range.
+
+    Columns
+    -------
+    mkt_excess : daily market excess return (Mkt-RF), decimal
+    smb        : daily SMB return, decimal
+    hml        : daily HML return, decimal
+    mom        : daily momentum (UMD, "up minus down") factor return, decimal
+    rf         : daily risk-free rate, decimal
+
+    mom comes from Ken French's separately-published daily momentum file, not
+    the 3-factor file — it is merged in here on the date index.  Both series
+    share the same underlying CRSP universe, so this is the genuine academic
+    momentum factor (not an ETF proxy) with history back to the 1920s,
+    unlike the ETF-proxy MOM series in factor_engine/factors/mom.py which is
+    limited by MTUM's 2013 inception.
+    """
+    ff3 = _load_full_history()
+    mom = _load_full_mom_history()
+    df = ff3.join(mom[["mom"]], how="inner")
+    mask = (df.index >= pd.Timestamp(start)) & (df.index <= pd.Timestamp(end))
+    cols = [c for c in ("mkt_excess", "smb", "hml", "mom", "rf") if c in df.columns]
     return df.loc[mask, cols].copy()

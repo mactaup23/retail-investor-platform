@@ -1,5 +1,6 @@
 """
-FF3 skill-vs-beta decomposition for Module 3 — 13F Smart-Money Positioning & Skill Tracker.
+FF4 (Fama-French-Carhart) skill-vs-beta decomposition for Module 3 — 13F Smart-Money
+Positioning & Skill Tracker.
 
 Public interface
 ---------------
@@ -22,7 +23,7 @@ tests. Use confidence_label and alpha_t_stat to communicate uncertainty to end u
 Alignment
 ---------
 Fund quarterly returns from returns.py use adj_close prices at period_start (BOQ)
-and period_end (EOQ): R_fund = p_eoq / p_boq - 1.  The corresponding FF3 window
+and period_end (EOQ): R_fund = p_eoq / p_boq - 1.  The corresponding FF4 window
 covers dates strictly after period_start through period_end — French's daily factor
 for date D represents the return from D-1's close to D's close, so period_start
 itself is not a return day.  Daily factors are compounded geometrically, consistent
@@ -30,13 +31,22 @@ with the fund return computation.
 
 Regression
 ----------
-Quarterly excess fund return = α + β_mkt · MktExcess_q + β_smb · SMB_q + β_hml · HML_q + ε
+Quarterly excess fund return =
+    α + β_mkt · MktExcess_q + β_smb · SMB_q + β_hml · HML_q + β_mom · MOM_q + ε
 
 where:
     excess_fund_q = reconstructed_return − RF_q        (both arithmetic, quarterly)
     MktExcess_q   = (1+mkt_d1)·(1+mkt_d2)·...·(1+mkt_dT) − 1  compounded over quarter
-    SMB_q, HML_q  = same compounding applied to smb, hml daily series
+    SMB_q, HML_q, MOM_q = same compounding applied to smb, hml, mom daily series
     RF_q          = same compounding applied to rf daily series
+
+MOM_q comes from Ken French's official daily momentum series (get_ff4_daily()),
+not an ETF proxy — see factor_engine/french_data.py.  Adding momentum here is
+important for growth/momentum-tilted funds: a manager who structurally holds
+recent winners will show inflated alpha under FF3 because that return component
+has nowhere to go but the residual.  Under FF4 it is captured by β_mom instead,
+giving a cleaner separation of stock-picking skill from factor beta — the
+platform's stated thesis.
 
 Skill score
 -----------
@@ -47,8 +57,9 @@ Return decomposition (historical attribution, sample-period averages):
                         + β_mkt · mean(MktExcess_q)   [return_from_market]
                         + β_smb · mean(SMB_q)          [return_from_smb]
                         + β_hml · mean(HML_q)          [return_from_hml]
+                        + β_mom · mean(MOM_q)           [return_from_mom]
 
-By OLS construction the residual mean is zero, so these four components sum exactly
+By OLS construction the residual mean is zero, so these five components sum exactly
 to avg_excess_return_q.  This is historical attribution over the regression window,
 not a forward-looking projection.
 
@@ -64,7 +75,7 @@ import pandas as pd
 from statsmodels.regression.linear_model import OLS
 from statsmodels.tools import add_constant
 
-from factor_engine.french_data import get_ff3_daily
+from factor_engine.french_data import get_ff4_daily
 from smart_money.models import Fund
 from smart_money.returns import COVERAGE_THRESHOLD, FundQuarterReturn, reconstruct_all_quarters
 
@@ -91,16 +102,19 @@ class FundSkillScore(TypedDict):
     beta_market:          float
     beta_smb:             float
     beta_hml:             float
+    beta_mom:             float
     t_stat_market:        float
     t_stat_smb:           float
     t_stat_hml:           float
+    t_stat_mom:           float
     r_squared:            float
     # Historical attribution (sample-period averages, quarterly)
-    # These four sum exactly to avg_excess_return_q by OLS construction.
+    # These five sum exactly to avg_excess_return_q by OLS construction.
     avg_excess_return_q:  float      # mean(R_fund_q − RF_q) over regression window
     return_from_market:   float      # beta_market * mean(MktExcess_q)
     return_from_smb:      float      # beta_smb    * mean(SMB_q)
     return_from_hml:      float      # beta_hml    * mean(HML_q)
+    return_from_mom:      float      # beta_mom    * mean(MOM_q)
 
 
 # ---------------------------------------------------------------------------
@@ -108,26 +122,27 @@ class FundSkillScore(TypedDict):
 # ---------------------------------------------------------------------------
 
 def _aggregate_quarter_factors(
-    ff3_daily: pd.DataFrame,
+    ff4_daily: pd.DataFrame,
     period_start: str,
     period_end: str,
 ) -> "dict[str, float] | None":
     """
-    Compound daily FF3 factors to a single quarterly observation.
+    Compound daily FF4 factors to a single quarterly observation.
 
     Window: dates strictly after period_start through period_end (inclusive).
     Returns None if no trading days fall in the window (e.g. data gap).
     """
     start  = pd.Timestamp(period_start)
     end    = pd.Timestamp(period_end)
-    mask   = (ff3_daily.index > start) & (ff3_daily.index <= end)
-    window = ff3_daily.loc[mask]
+    mask   = (ff4_daily.index > start) & (ff4_daily.index <= end)
+    window = ff4_daily.loc[mask]
     if window.empty:
         return None
     return {
         "mkt_excess": float((1.0 + window["mkt_excess"]).prod() - 1.0),
         "smb":        float((1.0 + window["smb"]).prod()        - 1.0),
         "hml":        float((1.0 + window["hml"]).prod()        - 1.0),
+        "mom":        float((1.0 + window["mom"]).prod()        - 1.0),
         "rf":         float((1.0 + window["rf"]).prod()         - 1.0),
     }
 
@@ -155,9 +170,9 @@ def score_from_returns(
     min_quarters: int = MIN_QUARTERS_REG,
 ) -> "FundSkillScore | None":
     """
-    Compute FF3 skill decomposition from a pre-built list of valid quarterly returns.
+    Compute FF4 skill decomposition from a pre-built list of valid quarterly returns.
 
-    This is the computational core — it loads FF3 data, aggregates factors to
+    This is the computational core — it loads FF4 data, aggregates factors to
     quarterly frequency, and runs OLS.  It is database-free and directly testable.
     score_fund() is the DB-backed wrapper that fetches and filters quarters first.
 
@@ -176,20 +191,20 @@ def score_from_returns(
     -------
     FundSkillScore | None
         None when len(valid_quarters) < min_quarters or when fewer than
-        min_quarters quarters survive the FF3 alignment step.
+        min_quarters quarters survive the FF4 alignment step.
     """
     if len(valid_quarters) < min_quarters:
         return None
 
-    # Load FF3 daily data spanning the full sample in one call.
+    # Load FF4 daily data spanning the full sample in one call.
     earliest = min(q["period_start"] for q in valid_quarters)
     latest   = max(q["period_end"]   for q in valid_quarters)
-    ff3_daily = get_ff3_daily(earliest, latest)
+    ff4_daily = get_ff4_daily(earliest, latest)
 
     # Build per-quarter rows: compound daily factors + fund excess return.
     rows = []
     for q in valid_quarters:
-        factors_q = _aggregate_quarter_factors(ff3_daily, q["period_start"], q["period_end"])
+        factors_q = _aggregate_quarter_factors(ff4_daily, q["period_start"], q["period_end"])
         if factors_q is None:
             continue
         rows.append({
@@ -198,6 +213,7 @@ def score_from_returns(
             "mkt_excess":  factors_q["mkt_excess"],
             "smb":         factors_q["smb"],
             "hml":         factors_q["hml"],
+            "mom":         factors_q["mom"],
         })
 
     if len(rows) < min_quarters:
@@ -205,8 +221,8 @@ def score_from_returns(
 
     df = pd.DataFrame(rows).set_index("quarter")
 
-    # OLS: fund_excess = alpha + beta_mkt*mkt_excess + beta_smb*smb + beta_hml*hml
-    X      = add_constant(df[["mkt_excess", "smb", "hml"]])
+    # OLS: fund_excess = alpha + beta_mkt*mkt_excess + beta_smb*smb + beta_hml*hml + beta_mom*mom
+    X      = add_constant(df[["mkt_excess", "smb", "hml", "mom"]])
     result = OLS(df["fund_excess"], X).fit()
 
     alpha_q  = float(result.params["const"])
@@ -215,11 +231,13 @@ def score_from_returns(
     beta_mkt = float(result.params["mkt_excess"])
     beta_smb = float(result.params["smb"])
     beta_hml = float(result.params["hml"])
+    beta_mom = float(result.params["mom"])
 
     # Historical attribution over the regression sample window.
     mean_mkt = float(df["mkt_excess"].mean())
     mean_smb = float(df["smb"].mean())
     mean_hml = float(df["hml"].mean())
+    mean_mom = float(df["mom"].mean())
 
     n      = len(rows)
     is_rel = n >= MIN_QUARTERS_RELIABLE
@@ -239,14 +257,17 @@ def score_from_returns(
         beta_market          = round(beta_mkt, 4),
         beta_smb             = round(beta_smb, 4),
         beta_hml             = round(beta_hml, 4),
+        beta_mom             = round(beta_mom, 4),
         t_stat_market        = round(float(result.tvalues["mkt_excess"]), 4),
         t_stat_smb           = round(float(result.tvalues["smb"]), 4),
         t_stat_hml           = round(float(result.tvalues["hml"]), 4),
+        t_stat_mom           = round(float(result.tvalues["mom"]), 4),
         r_squared            = round(float(result.rsquared), 4),
         avg_excess_return_q  = round(float(df["fund_excess"].mean()), 6),
         return_from_market   = round(beta_mkt * mean_mkt, 6),
         return_from_smb      = round(beta_smb * mean_smb, 6),
         return_from_hml      = round(beta_hml * mean_hml, 6),
+        return_from_mom      = round(beta_mom * mean_mom, 6),
     )
 
 
@@ -256,7 +277,7 @@ def score_fund(
     coverage_threshold: float = COVERAGE_THRESHOLD,
 ) -> "FundSkillScore | None":
     """
-    Compute FF3 skill decomposition for a fund using the DB.
+    Compute FF4 skill decomposition for a fund using the DB.
 
     Fetches all quarterly returns from the DB via reconstruct_all_quarters,
     filters to is_valid=True, and delegates to score_from_returns.

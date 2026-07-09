@@ -15,7 +15,7 @@ Deep-dive panel (6 tabs)
 3. Valuation   — multiples, analyst consensus, short interest
 4. Financials  — revenue/margin charts, income table, FCF, balance sheet
 5. Earnings    — beat/miss bar chart, EPS history
-6. Factor      — FF3 profile vs portfolio (Module 1 engine)
+6. Factor      — FF4 profile vs portfolio (Module 1 engine)
 """
 from __future__ import annotations
 
@@ -1109,14 +1109,15 @@ def _render_factor_tab(ticker: str) -> None:
         _interpret_beta_market,
         _interpret_beta_smb,
         _interpret_beta_hml,
+        _interpret_beta_mom,
     )
 
-    with st.spinner(f"Computing FF3 factor profile for {ticker}…"):
+    with st.spinner(f"Computing FF4 factor profile for {ticker}…"):
         profile = ticker_ff3_profile(ticker)
 
     if profile is None:
         st.info(
-            f"FF3 factor profile not available for {ticker}. "
+            f"FF4 factor profile not available for {ticker}. "
             "This may be a new IPO, a delisted security, or a ticker with insufficient "
             "price history in the 2021–2024 analysis window.",
             icon=":material/info:",
@@ -1126,11 +1127,12 @@ def _render_factor_tab(ticker: str) -> None:
     bm  = profile["beta_market"]
     bsmb = profile["beta_smb"]
     bhml = profile["beta_hml"]
+    bmom = profile["beta_mom"]
     r2   = profile["r_squared"]
     alpha = profile["alpha_annualized"]
 
     # --- Metrics grid ---
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
     c1.metric(
         "Market β", f"{bm:+.3f}",
         help=(
@@ -1158,24 +1160,33 @@ def _render_factor_tab(ticker: str) -> None:
         ),
     )
     c4.metric(
-        "R²", f"{r2:.3f}",
+        "Mom β", f"{bmom:+.3f}",
         help=(
-            "R-Squared measures how much of this stock's daily return variance is explained by "
-            "the three Fama-French factors (market, size, value). Higher R² means the stock is "
-            "more factor-driven; lower means more stock-specific."
+            "Momentum Factor (Carhart UMD) measures exposure to recent price trend. Positive "
+            "values mean the stock tends to move with recent winners (stocks that have been "
+            "rising). Negative values mean it tends to move with recent losers. Near zero means "
+            "momentum-neutral."
         ),
     )
     c5.metric(
-        "Alpha (ann.)", f"{alpha * 100:+.2f}%",
+        "R²", f"{r2:.3f}",
         help=(
-            "Annualized Alpha is the return unexplained by factor exposures — the stock's "
-            "performance above or below what its market, size, and value tilts would predict. "
-            "Positive alpha suggests historical outperformance versus its factor benchmark; "
-            "negative means underperformance. This is a historical measure, not a prediction "
-            "of future returns."
+            "R-Squared measures how much of this stock's daily return variance is explained by "
+            "the four Fama-French-Carhart factors (market, size, value, momentum). Higher R² "
+            "means the stock is more factor-driven; lower means more stock-specific."
         ),
     )
     c6.metric(
+        "Alpha (ann.)", f"{alpha * 100:+.2f}%",
+        help=(
+            "Annualized Alpha is the return unexplained by factor exposures — the stock's "
+            "performance above or below what its market, size, value, and momentum tilts would "
+            "predict. Positive alpha suggests historical outperformance versus its factor "
+            "benchmark; negative means underperformance. This is a historical measure, not a "
+            "prediction of future returns."
+        ),
+    )
+    c7.metric(
         "n_obs", str(profile["n_obs"]),
         help=(
             "Number of trading days used in the regression. More observations generally produce "
@@ -1186,7 +1197,7 @@ def _render_factor_tab(ticker: str) -> None:
 
     st.caption(
         f"{profile['start']} → {profile['end']} · "
-        f"Ken French US FF3 factors"
+        f"Ken French US FF4 factors"
     )
 
     # --- Plain-English interpretation ---
@@ -1194,8 +1205,9 @@ def _render_factor_tab(ticker: str) -> None:
     st.markdown(f"- **Market:** {_interpret_beta_market(bm)}")
     st.markdown(f"- **Size (SMB):** {_interpret_beta_smb(bsmb)}")
     st.markdown(f"- **Value/Growth (HML):** {_interpret_beta_hml(bhml)}")
+    st.markdown(f"- **Momentum (MOM):** {_interpret_beta_mom(bmom)}")
     st.markdown(
-        f"- **Model fit:** FF3 explains **{r2 * 100:.1f}%** of this stock's daily return variance. "
+        f"- **Model fit:** FF4 explains **{r2 * 100:.1f}%** of this stock's daily return variance. "
         + ("High — most price movement is factor-driven." if r2 > 0.60
            else "Moderate — substantial idiosyncratic component." if r2 > 0.35
            else "Low — heavily idiosyncratic or sector-specific.")
@@ -1213,6 +1225,7 @@ def _render_factor_tab(ticker: str) -> None:
     pm   = port.get("beta_market", 0)
     psmb = port.get("beta_smb", 0)
     phml = port.get("beta_hml", 0)
+    pmom = port.get("beta_mom", 0)
 
     alloc_pct = st.select_slider(
         "Allocation size",
@@ -1225,6 +1238,7 @@ def _render_factor_tab(ticker: str) -> None:
     new_m   = (1 - w) * pm   + w * bm
     new_smb = (1 - w) * psmb + w * bsmb
     new_hml = (1 - w) * phml + w * bhml
+    new_mom = (1 - w) * pmom + w * bmom
 
     def _delta_icon(delta: float) -> str:
         return ":green[↑]" if delta > 0.02 else ":red[↓]" if delta < -0.02 else ":gray[→]"
@@ -1252,6 +1266,13 @@ def _render_factor_tab(ticker: str) -> None:
             impact_col:   f"{new_hml:+.3f} ({new_hml - phml:+.3f})",
             "":           _delta_icon(new_hml - phml),
         },
+        {
+            "Factor":     "MOM β (momentum)",
+            "This Stock": f"{bmom:+.3f}",
+            "Portfolio":  f"{pmom:+.3f}",
+            impact_col:   f"{new_mom:+.3f} ({new_mom - pmom:+.3f})",
+            "":           _delta_icon(new_mom - pmom),
+        },
     ]
     st.dataframe(pd.DataFrame(comp_data), hide_index=True, width="stretch")
 
@@ -1277,6 +1298,13 @@ def _render_factor_tab(ticker: str) -> None:
         verdicts.append("adds value tilt")
     else:
         verdicts.append("deepens growth tilt")
+
+    if abs(bmom - pmom) < 0.10:
+        verdicts.append("momentum-neutral")
+    elif bmom > pmom:
+        verdicts.append("adds momentum exposure")
+    else:
+        verdicts.append("adds contrarian exposure")
 
     st.caption(f":material/balance: Adding {ticker} at {alloc_pct}%: " + " · ".join(verdicts) + ".")
     st.caption(

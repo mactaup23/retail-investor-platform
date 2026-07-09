@@ -81,7 +81,7 @@ _ensure_db_downloaded()
 from dashboard.db import get_db
 get_db()
 
-# Pre-warm portfolio FF3 betas so the Factor Profile tab is always instant.
+# Pre-warm portfolio FF4 betas so the Factor Profile tab is always instant.
 # cache_resource means this runs exactly once per server process; subsequent
 # page loads (and all other sessions) get an immediate cache hit. Weights come
 # from the user's saved portfolio (data/user_prefs.json) so the Signals page's

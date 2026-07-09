@@ -1,5 +1,5 @@
 """
-Portfolio page — Fama-French 3-factor analysis of the user's editable portfolio.
+Portfolio page — Fama-French-Carhart 4-factor analysis of the user's editable portfolio.
 
 Layout
 ------
@@ -82,12 +82,14 @@ def _render_stress_card(scenario: dict) -> None:
         mkt  = scenario.get("mkt_contrib", 0)
         smb  = scenario.get("smb_contrib", 0)
         hml  = scenario.get("hml_contrib", 0)
+        mom  = scenario.get("mom_contrib", 0)
         rf   = scenario.get("rf_contrib", 0)
         alph = scenario.get("alpha_contrib", 0)
         st.caption(
             f"Decomposition — Market: {mkt * 100:+.1f}%  "
             f"SMB: {smb * 100:+.1f}%  "
             f"HML: {hml * 100:+.1f}%  "
+            f"MOM: {mom * 100:+.1f}%  "
             f"RF: {rf * 100:+.1f}%"
         )
         st.caption(
@@ -107,6 +109,7 @@ def _run_analysis(start: str, end: str, weights: dict[str, float]) -> dict:
         beta_market=h["beta_market"],
         beta_smb=h["beta_smb"],
         beta_hml=h["beta_hml"],
+        beta_mom=h["beta_mom"],
         alpha_daily=h["alpha_daily"],
     )
     analysis_cache.save(results, stress)
@@ -342,11 +345,12 @@ with st.container(horizontal=True):
     st.metric("β market",    f"{headline['beta_market']:+.3f}",  border=True)
     st.metric("β SMB",       f"{headline['beta_smb']:+.3f}",     border=True)
     st.metric("β HML",       f"{headline['beta_hml']:+.3f}",     border=True)
+    st.metric("β MOM",       f"{headline['beta_mom']:+.3f}",     border=True)
     st.metric("R²",          f"{headline['r_squared']:.3f}",     border=True)
     st.metric("Alpha (ann.)", _pct(headline["alpha_annualised"]), border=True)
 
 st.caption(
-    f"FF3 model fit: R² = {headline['r_squared']:.3f} explains "
+    f"FF4 model fit: R² = {headline['r_squared']:.3f} explains "
     f"{headline['r_squared'] * 100:.1f}% of daily portfolio variance  ·  "
     f"n = {headline['n_obs']} trading days  ·  "
     f"Period: {data['start']} → {data['end']}"
@@ -365,8 +369,8 @@ st.subheader("Per-holding attribution")
 
 per_holding = data["per_holding"]
 ph_df = pd.DataFrame(per_holding)[
-    ["ticker", "weight", "beta_market", "beta_smb", "beta_hml",
-     "wtd_beta_market", "wtd_beta_smb", "wtd_beta_hml",
+    ["ticker", "weight", "beta_market", "beta_smb", "beta_hml", "beta_mom",
+     "wtd_beta_market", "wtd_beta_smb", "wtd_beta_hml", "wtd_beta_mom",
      "alpha_annualised", "r_squared", "factor_basis"]
 ].copy()
 ph_df["weight_pct"] = (ph_df["weight"] * 100).round(2)
@@ -380,6 +384,7 @@ chart_df = pd.DataFrame([
         {"ticker": r["ticker"], "factor": "β market", "contribution": r["wtd_beta_market"]},
         {"ticker": r["ticker"], "factor": "β SMB",    "contribution": r["wtd_beta_smb"]},
         {"ticker": r["ticker"], "factor": "β HML",    "contribution": r["wtd_beta_hml"]},
+        {"ticker": r["ticker"], "factor": "β MOM",    "contribution": r["wtd_beta_mom"]},
     ]
 ])
 
@@ -392,8 +397,8 @@ bar_chart = (
         color=alt.Color(
             "factor:N",
             scale=alt.Scale(
-                domain=["β market", "β SMB", "β HML"],
-                range=["#60A5FA", "#34D399", "#A78BFA"],
+                domain=["β market", "β SMB", "β HML", "β MOM"],
+                range=["#60A5FA", "#34D399", "#A78BFA", "#FBBF24"],
             ),
             legend=alt.Legend(title=None),
         ),
@@ -411,9 +416,11 @@ st.dataframe(
         "beta_market":     "β market",
         "beta_smb":        "β SMB",
         "beta_hml":        "β HML",
+        "beta_mom":        "β MOM",
         "wtd_beta_market": "Wtd β mkt",
         "wtd_beta_smb":    "Wtd β SMB",
         "wtd_beta_hml":    "Wtd β HML",
+        "wtd_beta_mom":    "Wtd β MOM",
         "alpha_annualised":"Alpha (ann.)",
         "r_squared":       "R²",
         "factor_basis":    "Factor basis",
@@ -424,16 +431,18 @@ st.dataframe(
         "β market":     st.column_config.NumberColumn(format="%.4f"),
         "β SMB":        st.column_config.NumberColumn(format="%.4f"),
         "β HML":        st.column_config.NumberColumn(format="%.4f"),
+        "β MOM":        st.column_config.NumberColumn(format="%.4f"),
         "Wtd β mkt":    st.column_config.NumberColumn(format="%.4f"),
         "Wtd β SMB":    st.column_config.NumberColumn(format="%.4f"),
         "Wtd β HML":    st.column_config.NumberColumn(format="%.4f"),
+        "Wtd β MOM":    st.column_config.NumberColumn(format="%.4f"),
         "Alpha (ann.)": st.column_config.NumberColumn(format="%+.4f"),
         "R²":           st.column_config.NumberColumn(format="%.4f"),
     },
 )
 _intl_tickers = [r["ticker"] for r in per_holding if "intl" in r["factor_basis"]]
 _intl_note = (
-    f" {', '.join(_intl_tickers)} {'uses' if len(_intl_tickers) == 1 else 'use'} US FF3 factors "
+    f" {', '.join(_intl_tickers)} {'uses' if len(_intl_tickers) == 1 else 'use'} US FF4 factors "
     "as an approximation (international ETF — labeled in Factor basis column)."
     if _intl_tickers else ""
 )
@@ -462,6 +471,7 @@ if not stress:
                 beta_market=h["beta_market"],
                 beta_smb=h["beta_smb"],
                 beta_hml=h["beta_hml"],
+                beta_mom=h["beta_mom"],
                 alpha_daily=h["alpha_daily"],
             )
             data["stress_tests"] = stress

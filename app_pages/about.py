@@ -46,8 +46,8 @@ side before executing.
 st.subheader("Module 1 — factor model construction")
 
 st.markdown("""
-The factor model is a self-constructed Fama-French 3-factor (FF3) model built from
-freely available ETF proxies. The three factors are:
+The factor model is a self-constructed Fama-French-Carhart 4-factor (FF4) model built
+from freely available ETF proxies. The four factors are:
 
 **Market factor (Mkt−Rf)**
 The excess return of the broad equity market over the risk-free rate. Proxy: SPY daily
@@ -67,6 +67,17 @@ ETFs) minus average of IWF + IWO (growth ETFs). Correlation with the academic FF
 factor is ~0.80–0.88. The four-ETF averaging reduces noise from any single value/growth
 index's idiosyncratic construction choices.
 
+**Momentum factor (MOM — Carhart UMD)**
+The return spread between recent winners and the broad market. Proxy: MTUM (iShares MSCI
+USA Momentum Factor ETF) minus IWB (Russell 1000 blend). Unlike SMB/HML, there is no
+liquid "loser" ETF to short, so this factor is long-only-minus-benchmark rather than a
+true long-short spread — correlation with the academic Carhart UMD factor is meaningfully
+lower (measured +0.71 over 2020-2024, vs. 0.85-0.90 for SMB and 0.80-0.88 for HML), and
+MTUM's 2013 inception bounds how far back the proxy can be computed. Portfolio-level
+analysis and fund skill scoring (Module 3) instead use Ken
+French's official daily momentum series, which has full history and is the genuine
+academic factor rather than a proxy.
+
 **Why build from scratch instead of using the Ken French data library directly?**
 For the smart-money fund skill scoring (Module 3), we need quarterly factor returns
 aligned exactly with each fund's quarterly reporting period. The Ken French library
@@ -74,10 +85,18 @@ provides monthly and daily series, but constructing them from ETF proxies gives 
 control over the alignment. The ETF-proxy approach is also the stronger interview story —
 it demonstrates the methodology, not just the ability to download a CSV.
 
+**Why add momentum?**
+Momentum is the fourth leg of the standard Carhart (1997) extension to Fama-French, and
+it matters most for managers who structurally hold recent winners — growth/momentum funds
+in particular. Under a 3-factor model, return from riding winners has nowhere to go but
+the residual, inflating measured alpha. Under FF4 it is captured by an explicit β_mom
+instead, giving a cleaner separation of stock-picking skill from factor beta — the
+platform's stated thesis for Module 3/4.
+
 **Regression specification**
 For a return series *r* and risk-free rate *Rf*:
 
-> excess_return = α + β_mkt × (Mkt − Rf) + β_smb × SMB + β_hml × HML + ε
+> excess_return = α + β_mkt × (Mkt − Rf) + β_smb × SMB + β_hml × HML + β_mom × MOM + ε
 
 Estimated via OLS. The intercept α is Jensen's alpha — the average daily excess return
 after accounting for factor exposures. Alpha is annualised as α × 252.
@@ -106,25 +125,29 @@ rebalancing):
 **Two-tier analysis**
 Tier 1 produces a single headline set of betas by constructing the daily portfolio return
 as a weighted sum of individual holding log returns, then regressing the combined series
-against the FF3 factors. This captures diversification effects (cross-holding
+against the FF4 factors. This captures diversification effects (cross-holding
 correlations).
 
-Tier 2 runs FF3 independently on each holding and computes the weighted beta contribution
+Tier 2 runs FF4 independently on each holding and computes the weighted beta contribution
 (weight × beta) for each. The sum of weighted betas approximates — but won't exactly
 match — the Tier 1 betas, because independent regressions use the same factor matrix but
 different residual structures.
 
 **VXUS treatment**
 VXUS is an international ETF. Strictly, it should be regressed against international
-Fama-French factors (Global FF3 from the Ken French library). The platform uses US FF3 as
-an approximation and labels it explicitly in the attribution table. The beta estimates are
-directionally useful but carry additional noise.
+Fama-French factors (Global FF3 from the Ken French library, which does not publish a
+momentum leg). The platform uses US FF4 as an approximation and labels it explicitly in
+the attribution table. The beta estimates are directionally useful but carry additional
+noise.
 
 **Stress tests**
-The stress tests apply the portfolio's current FF3 betas to actual factor returns that
-occurred during three historical episodes. The daily estimated return is:
+The stress tests apply the portfolio's current FF4 betas to actual factor returns that
+occurred during three historical episodes, including momentum — sourced from Ken French's
+official daily series so pre-2013 scenarios (e.g. the 2008 financial crisis) are still
+covered despite the MTUM ETF proxy not existing that far back. The daily estimated return
+is:
 
-> r̂ₜ = Rfₜ + α_daily + β_mkt × Mkt_excessₜ + β_smb × SMBₜ + β_hml × HMLₜ
+> r̂ₜ = Rfₜ + α_daily + β_mkt × Mkt_excessₜ + β_smb × SMBₜ + β_hml × HMLₜ + β_mom × MOMₜ
 
 Period return: R = exp(Σ r̂ₜ) − 1
 
@@ -171,10 +194,15 @@ For each fund, quarterly portfolio returns are reconstructed using the Grinblatt
 (which is the quarter *end*), assume those positions were held at the start of the quarter,
 and compute their buy-and-hold return over the quarter using prices at both ends.
 
-A fund's quarterly excess return series is then regressed against the FF3 factors to
+A fund's quarterly excess return series is then regressed against the FF4 factors to
 decompose its returns:
 
-> r_fund_q − Rf_q = α_q + β_mkt × Mkt_q + β_smb × SMB_q + β_hml × HML_q + ε_q
+> r_fund_q − Rf_q = α_q + β_mkt × Mkt_q + β_smb × SMB_q + β_hml × HML_q + β_mom × MOM_q + ε_q
+
+Momentum matters most for growth/momentum-tilted managers: a fund that structurally holds
+recent winners will show inflated alpha under a 3-factor model, because that return
+component has nowhere to go but the residual. FF4 captures it as an explicit β_mom
+instead — a cleaner separation of stock-picking skill from factor beta.
 
 The intercept α is the quarterly alpha — the return attributable to stock selection after
 removing factor beta. It is annualised as (1 + α_q)⁴ − 1 for display.
@@ -408,7 +436,7 @@ st.markdown("""
 | Source | What it provides | Latency |
 |--------|-----------------|---------|
 | SEC EDGAR | 13F-HR quarterly filings | 45 days after quarter end |
-| Ken French Data Library | US FF3 daily factors for portfolio analysis | Monthly updates |
+| Ken French Data Library | US FF4 daily factors for portfolio analysis | Monthly updates |
 | yfinance | Adjusted daily closing prices | Daily (T+0) |
 | OpenFIGI API | CUSIP → ticker resolution | Near real-time |
 | Anthropic Batch API | NLP scoring of 10-Q / 10-K MD&A | Computed at pipeline run |
@@ -429,11 +457,16 @@ report thousands of positions spanning foreign-listed stocks, delisted securitie
 obscure instruments that yfinance cannot price. Their 13F-derived return reconstructions
 are unreliable regardless of pipeline parameters.
 
-*ETF proxy factors vs pure factor sorts.* The self-constructed FF3 factors (IWM−IWB for
+*ETF proxy factors vs pure factor sorts.* The self-constructed FF4 factors (IWM−IWB for
 SMB, four-ETF blend for HML) correlate 0.80–0.90 with the academic factor sorts but are
 not identical. The ETF proxies include transaction costs and tracking error that the
 academic sorts do not. The effect on beta estimates is small (within 0.05 for most
-holdings) but real.
+holdings) but real. The momentum proxy (MTUM−IWB) is the exception — correlation with
+the academic Carhart UMD factor is meaningfully lower (measured +0.71 over 2020-2024)
+because it is long-only-minus-benchmark rather than a true long-short winners-minus-losers
+spread (no liquid "loser" ETF exists to short). This proxy is used only for individual-holding
+factor profiles; portfolio-level analysis, stress tests, and fund skill scoring all use
+Ken French's official daily momentum series instead.
 
 *Skill scores require 12+ quarters to be reliable.* Below 12 quarters, the OLS alpha
 estimate has wide confidence intervals. Alpha t-statistics and confidence labels are always

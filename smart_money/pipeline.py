@@ -7,7 +7,7 @@ Phases
     2  cusip       Resolve CUSIPs to FIGI/ticker via OpenFIGI
     3  prices      Fetch daily prices for resolved tickers via yfinance
     4  returns     Reconstruct quarterly returns (diagnostic log; no DB write)
-    5  skill       FF3 skill decomposition; persist scores to FundSkillResult
+    5  skill       FF4 skill decomposition; persist scores to FundSkillResult
 
 Usage
 -----
@@ -421,14 +421,17 @@ def run_phase5_skill(active_funds: list[Fund]) -> None:
              beta_market=result["beta_market"],
              beta_smb=result["beta_smb"],
              beta_hml=result["beta_hml"],
+             beta_mom=result["beta_mom"],
              t_stat_market=result["t_stat_market"],
              t_stat_smb=result["t_stat_smb"],
              t_stat_hml=result["t_stat_hml"],
+             t_stat_mom=result["t_stat_mom"],
              r_squared=result["r_squared"],
              avg_excess_return_q=result["avg_excess_return_q"],
              return_from_market=result["return_from_market"],
              return_from_smb=result["return_from_smb"],
              return_from_hml=result["return_from_hml"],
+             return_from_mom=result["return_from_mom"],
          )
          .on_conflict_replace()
          .execute())

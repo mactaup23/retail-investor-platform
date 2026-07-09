@@ -29,18 +29,21 @@ Verification scripts: .venv/bin/python scripts/verify_nlp.py / verify_returns.py
 
 Two independent subsystems share this repo:
 
-factor_engine/ — Modules 1-2, Fama-French 3-factor analysis of a retail portfolio. Pure analytics: reads CSV price data from data/, runs OLS regressions, no DB. Entry points: scripts/run_portfolio_analysis.py, scripts/run_market_factor.py.
+factor_engine/ — Modules 1-2, Fama-French-Carhart 4-factor analysis of a retail portfolio. Pure analytics: reads CSV price data from data/, runs OLS regressions, no DB. Entry points: scripts/run_portfolio_analysis.py, scripts/run_market_factor.py.
 
 smart_money/ — Modules 3-5, 13F smart-money signal tracker. Uses SQLite at data/module3.db (Peewee ORM, WAL mode, FK enforcement). All tables defined in models.py; init_db() must be called before any DB access.
 
 ## Module 1 — Factor Engine (shared core)
 
-Self-constructed Fama-French 3-factor model (market, SMB, HML) from free ETF proxies:
+Self-constructed Fama-French-Carhart 4-factor model (market, SMB, HML, MOM) from free ETF proxies:
 - Market: SPY vs ^IRX (3-month T-bill risk-free rate)
 - SMB: IWM minus IWB — correlation ~0.85-0.90 with academic FF SMB
 - HML: 4-ETF averaging IWD+IWN value minus IWF+IWO growth — correlation ~0.80-0.88 with academic FF HML
+- MOM: MTUM minus IWB — correlation +0.71 with academic Carhart UMD (measured 2020-2024). Long-only-minus-benchmark, not a true long-short spread (no liquid "loser" ETF exists) — structurally weaker proxy than SMB/HML. MTUM inception (April 2013) bounds how far back this proxy can be computed. See factor_engine/factors/mom.py.
 
 DO NOT fix the ETF proxy approach — deliberate design decision. Building from scratch rather than using paid providers (Barra, Axioma) is the stronger interview story. Correlation caveat is documented in code.
+
+Portfolio-level analysis, stress tests, and fund skill scoring (Module 3) use Ken French's official daily factor series (factor_engine/french_data.py::get_ff4_daily(), merges the 3-factor file with French's separately-published momentum file) rather than the ETF proxies, for full history and accuracy — the ETF proxies above are used only for the individual-holding Factor Profile view (compute_factor_loadings()).
 
 Ken French RF swap is flagged for polish pass — ^IRX used instead of canonical Ken French daily RF. Difference is negligible but swap planned before final launch.
 
@@ -48,7 +51,7 @@ Ken French RF swap is flagged for polish pass — ^IRX used instead of canonical
 
 Real portfolio: VTI 24.37%, QQQM 11.40%, SCHD 11.78%, VXUS 15.58%, NVDA 2.94%, GOOGL 5.18%, QTUM 10.27%, VTV 8.21%, XLI 5.12%.
 
-VXUS uses Ken French Global FF3 factors (not US factors) — labeled in output. All other holdings use US FF3.
+VXUS uses Ken French Global FF3 factors (not US factors, and no regional momentum series exists) — labeled "US FF4 (intl. approx.)" in output. All other holdings use US FF4.
 
 Stress test methodology: historical factor shock replay against current betas. This is risk characterization, NOT a backtest. Label accordingly in all output.
 
@@ -67,6 +70,8 @@ CRITICAL DATA FACTS — do not change without understanding why:
 - iXBRL viewer URLs (/ix?doc=...) must be stripped via _unwrap_ix() before fetching raw HTML
 - Namespace detection must handle both informationTable (mixed case) and informationtable (lowercase) across filers and eras
 - Viking Global CIK is 1103804, not 1166928 (which is West Bancorporation — wrong entity caught during verification)
+
+Fund skill regression is Fama-French-Carhart 4-factor (adds momentum to the historical FF3 spec) — see smart_money/factor_apply.py. Momentum matters most for growth/momentum-tilted managers (e.g. Greenoaks, Altimeter): under FF3 their return from holding recent winners was mis-attributed to alpha; FF4 captures it as beta_mom instead.
 
 Skill score thresholds: MIN_QUARTERS_REG=8, MIN_QUARTERS_RELIABLE=12. Alpha is a directional decomposition signal NOT a significance test. Always show t-stat and confidence_label alongside alpha.
 
@@ -129,7 +134,7 @@ TaxLot
 ## Pre-Launch Polish List
 
 1. Ken French RF series swap (replace ^IRX with canonical FF RF)
-2. Momentum factor (MOM) addition to complete FF4 model
+2. Completed — momentum factor (MOM) added across compute_factor_loadings(), portfolio.py, stress_test.py, dashboard/factor.py, and factor_apply.py; FundSkillResult migrated with beta_mom/t_stat_mom/return_from_mom
 3. Staleness check in prices.py _is_cached
 4. Delisted ticker handler improvements
 5. Quarterly pipeline automation (Mac launchd/cron)

@@ -2,7 +2,7 @@
 Unit tests for the SMB factor build function.
 
 Loading / regression tests live in test_hml_factor.py alongside
-compute_factor_loadings(), which is the unified 3-factor OLS function.
+compute_factor_loadings(), which is the unified 4-factor OLS function.
 """
 
 import numpy as np

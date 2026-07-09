@@ -1,5 +1,5 @@
 """
-Unit tests for the HML factor module and the unified 3-factor loading function.
+Unit tests for the HML factor module and the unified 4-factor loading function.
 
 Tests use synthetic return series — no network calls needed.
 """
@@ -16,16 +16,18 @@ def _make_dates(n=500):
 
 
 def _synthetic_factors(n=500, seed=42):
-    """Return synthetic market, SMB, and HML factor DataFrames."""
+    """Return synthetic market, SMB, HML, and MOM factor DataFrames."""
     rng = np.random.default_rng(seed)
     dates = _make_dates(n)
 
-    market = pd.Series(rng.normal(0.0003, 0.010, n), index=dates)
-    rf     = pd.Series(0.00002, index=dates)
-    small  = pd.Series(rng.normal(0.00035, 0.011, n), index=dates)
-    large  = pd.Series(rng.normal(0.00020, 0.008, n), index=dates)
-    value  = pd.Series(rng.normal(0.00030, 0.009, n), index=dates)
-    growth = pd.Series(rng.normal(0.00015, 0.009, n), index=dates)
+    market   = pd.Series(rng.normal(0.0003, 0.010, n), index=dates)
+    rf       = pd.Series(0.00002, index=dates)
+    small    = pd.Series(rng.normal(0.00035, 0.011, n), index=dates)
+    large    = pd.Series(rng.normal(0.00020, 0.008, n), index=dates)
+    value    = pd.Series(rng.normal(0.00030, 0.009, n), index=dates)
+    growth   = pd.Series(rng.normal(0.00015, 0.009, n), index=dates)
+    momentum = pd.Series(rng.normal(0.00025, 0.010, n), index=dates)
+    benchmark = pd.Series(rng.normal(0.00020, 0.008, n), index=dates)
 
     market_factor = pd.DataFrame({
         "market_return": market,
@@ -42,20 +44,28 @@ def _synthetic_factors(n=500, seed=42):
         "growth_return": growth,
         "hml":           value - growth,
     })
-    return market_factor, smb_factor, hml_factor, rf
+    mom_factor = pd.DataFrame({
+        "momentum_return":  momentum,
+        "benchmark_return": benchmark,
+        "mom":              momentum - benchmark,
+    })
+    return market_factor, smb_factor, hml_factor, mom_factor, rf
 
 
 def _synthetic_stock(
     market_factor,
     smb_factor,
     hml_factor,
+    mom_factor,
     beta_mkt=1.1,
     beta_smb=0.5,
     beta_hml=0.4,
+    beta_mom=0.0,
     seed=7,
     n=500,
 ):
-    """Stock with known true loadings: r = α + β_mkt·mkt + β_smb·smb + β_hml·hml + ε."""
+    """Stock with known true loadings:
+    r = α + β_mkt·mkt + β_smb·smb + β_hml·hml + β_mom·mom + ε."""
     rng = np.random.default_rng(seed)
     dates = _make_dates(n)
     noise = rng.normal(0, 0.004, n)
@@ -63,6 +73,7 @@ def _synthetic_stock(
         beta_mkt * market_factor["market_excess"].values
         + beta_smb * smb_factor["smb"].values
         + beta_hml * hml_factor["hml"].values
+        + beta_mom * mom_factor["mom"].values
         + noise
     )
     stock = pd.Series(
@@ -114,39 +125,43 @@ def test_hml_4etf_averaging(mock_lr):
 
 @patch("factor_engine.factors.hml.load_returns")
 def test_compute_factor_loadings_recovers_true_betas(mock_lr):
-    """3-factor OLS should recover β_mkt ≈ 1.1, β_smb ≈ 0.5, β_hml ≈ 0.4."""
+    """4-factor OLS should recover β_mkt ≈ 1.1, β_smb ≈ 0.5, β_hml ≈ 0.4, β_mom ≈ 0.3."""
     n = 500
-    mf, sf, hf, _ = _synthetic_factors(n=n)
-    stock = _synthetic_stock(mf, sf, hf, beta_mkt=1.1, beta_smb=0.5, beta_hml=0.4, n=n)
+    mf, sf, hf, mmf, _ = _synthetic_factors(n=n)
+    stock = _synthetic_stock(
+        mf, sf, hf, mmf,
+        beta_mkt=1.1, beta_smb=0.5, beta_hml=0.4, beta_mom=0.3, n=n,
+    )
 
     mock_lr.return_value = pd.DataFrame({"TEST": stock})
     result = compute_factor_loadings(
         "TEST", "2020-01-01", "2022-12-31",
-        market_factor=mf, smb_factor=sf, hml_factor=hf,
+        market_factor=mf, smb_factor=sf, hml_factor=hf, mom_factor=mmf,
     )
 
     assert abs(result["beta_market"] - 1.1) < 0.12, f"β_mkt: expected ≈1.1, got {result['beta_market']}"
     assert abs(result["beta_smb"]    - 0.5) < 0.12, f"β_smb: expected ≈0.5, got {result['beta_smb']}"
     assert abs(result["beta_hml"]    - 0.4) < 0.12, f"β_hml: expected ≈0.4, got {result['beta_hml']}"
+    assert abs(result["beta_mom"]    - 0.3) < 0.12, f"β_mom: expected ≈0.3, got {result['beta_mom']}"
 
 
 @patch("factor_engine.factors.hml.load_returns")
 def test_result_keys(mock_lr):
     n = 500
-    mf, sf, hf, _ = _synthetic_factors(n=n)
-    stock = _synthetic_stock(mf, sf, hf, n=n)
+    mf, sf, hf, mmf, _ = _synthetic_factors(n=n)
+    stock = _synthetic_stock(mf, sf, hf, mmf, n=n)
     mock_lr.return_value = pd.DataFrame({"TEST": stock})
 
     result = compute_factor_loadings(
         "TEST", "2020-01-01", "2022-12-31",
-        market_factor=mf, smb_factor=sf, hml_factor=hf,
+        market_factor=mf, smb_factor=sf, hml_factor=hf, mom_factor=mmf,
     )
 
     expected = {
-        "ticker", "beta_market", "beta_smb", "beta_hml",
+        "ticker", "beta_market", "beta_smb", "beta_hml", "beta_mom",
         "alpha_annualised", "r_squared",
-        "t_stat_market", "t_stat_smb", "t_stat_hml",
-        "p_value_market", "p_value_smb", "p_value_hml",
+        "t_stat_market", "t_stat_smb", "t_stat_hml", "t_stat_mom",
+        "p_value_market", "p_value_smb", "p_value_hml", "p_value_mom",
         "n_obs", "start", "end",
     }
     assert expected == set(result.keys())
@@ -156,7 +171,7 @@ def test_result_keys(mock_lr):
 def test_negative_hml_for_growth_stock(mock_lr):
     """A stock tracking the growth ETF basket should have β_hml < 0."""
     n = 500
-    mf, sf, hf, rf = _synthetic_factors(n=n)
+    mf, sf, hf, mmf, rf = _synthetic_factors(n=n)
     # Perfect growth stock: tracks growth_return exactly
     stock = pd.Series(
         hf["growth_return"].values + rf.values,
@@ -167,7 +182,7 @@ def test_negative_hml_for_growth_stock(mock_lr):
 
     result = compute_factor_loadings(
         "GROWCO", "2020-01-01", "2022-12-31",
-        market_factor=mf, smb_factor=sf, hml_factor=hf,
+        market_factor=mf, smb_factor=sf, hml_factor=hf, mom_factor=mmf,
     )
     assert result["beta_hml"] < 0, f"Expected β_hml < 0 for growth stock, got {result['beta_hml']}"
 
@@ -176,7 +191,7 @@ def test_negative_hml_for_growth_stock(mock_lr):
 def test_positive_hml_for_value_stock(mock_lr):
     """A stock tracking the value ETF basket should have β_hml > 0."""
     n = 500
-    mf, sf, hf, rf = _synthetic_factors(n=n)
+    mf, sf, hf, mmf, rf = _synthetic_factors(n=n)
     stock = pd.Series(
         hf["value_return"].values + rf.values,
         index=_make_dates(n),
@@ -186,16 +201,16 @@ def test_positive_hml_for_value_stock(mock_lr):
 
     result = compute_factor_loadings(
         "VALCO", "2020-01-01", "2022-12-31",
-        market_factor=mf, smb_factor=sf, hml_factor=hf,
+        market_factor=mf, smb_factor=sf, hml_factor=hf, mom_factor=mmf,
     )
     assert result["beta_hml"] > 0, f"Expected β_hml > 0 for value stock, got {result['beta_hml']}"
 
 
 @patch("factor_engine.factors.hml.load_returns")
 def test_negative_smb_for_large_cap_stock(mock_lr):
-    """β_smb should remain negative for a large-cap stock in the 3-factor model."""
+    """β_smb should remain negative for a large-cap stock in the 4-factor model."""
     n = 500
-    mf, sf, hf, rf = _synthetic_factors(n=n)
+    mf, sf, hf, mmf, rf = _synthetic_factors(n=n)
     stock = pd.Series(
         sf["large_return"].values + rf.values,
         index=_make_dates(n),
@@ -205,23 +220,27 @@ def test_negative_smb_for_large_cap_stock(mock_lr):
 
     result = compute_factor_loadings(
         "BIGCO", "2020-01-01", "2022-12-31",
-        market_factor=mf, smb_factor=sf, hml_factor=hf,
+        market_factor=mf, smb_factor=sf, hml_factor=hf, mom_factor=mmf,
     )
     assert result["beta_smb"] < 0, f"Expected β_smb < 0 for large-cap stock, got {result['beta_smb']}"
 
 
 @patch("factor_engine.factors.hml.load_returns")
 def test_p_values_significant_for_clean_signal(mock_lr):
-    """With strong synthetic factor signal all three betas should be significant."""
+    """With strong synthetic factor signal all four betas should be significant."""
     n = 500
-    mf, sf, hf, _ = _synthetic_factors(n=n)
-    stock = _synthetic_stock(mf, sf, hf, beta_mkt=1.0, beta_smb=0.7, beta_hml=0.6, n=n)
+    mf, sf, hf, mmf, _ = _synthetic_factors(n=n)
+    stock = _synthetic_stock(
+        mf, sf, hf, mmf,
+        beta_mkt=1.0, beta_smb=0.7, beta_hml=0.6, beta_mom=0.5, n=n,
+    )
     mock_lr.return_value = pd.DataFrame({"TEST": stock})
 
     result = compute_factor_loadings(
         "TEST", "2020-01-01", "2022-12-31",
-        market_factor=mf, smb_factor=sf, hml_factor=hf,
+        market_factor=mf, smb_factor=sf, hml_factor=hf, mom_factor=mmf,
     )
     assert result["p_value_market"] < 0.05
     assert result["p_value_smb"]    < 0.05
     assert result["p_value_hml"]    < 0.05
+    assert result["p_value_mom"]    < 0.05

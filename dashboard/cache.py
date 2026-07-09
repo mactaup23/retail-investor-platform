@@ -1,7 +1,7 @@
 """
 Portfolio analysis results cache persisted to data/portfolio_analysis_cache.json.
 
-The factor analysis (FF3 regression + stress tests) downloads external data and
+The factor analysis (FF4 regression + stress tests) downloads external data and
 runs OLS — ~20s on first run. Results are cached to disk so the Portfolio page
 loads instantly on subsequent opens. The user triggers a refresh explicitly.
 

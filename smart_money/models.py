@@ -230,7 +230,7 @@ class PriceCache(BaseModel):
 
 class FundSkillResult(BaseModel):
     """
-    FF3 skill decomposition scores written by the pipeline (Phase 5).
+    FF4 skill decomposition scores written by the pipeline (Phase 5).
 
     One row per fund; INSERT OR REPLACE semantics mean each pipeline run
     overwrites the previous score.  Module 4 reads this table directly
@@ -252,14 +252,17 @@ class FundSkillResult(BaseModel):
     beta_market      = FloatField()
     beta_smb         = FloatField()
     beta_hml         = FloatField()
+    beta_mom         = FloatField(null=True)
     t_stat_market    = FloatField()
     t_stat_smb       = FloatField()
     t_stat_hml       = FloatField()
+    t_stat_mom       = FloatField(null=True)
     r_squared        = FloatField()
     avg_excess_return_q = FloatField()
     return_from_market  = FloatField()
     return_from_smb     = FloatField()
     return_from_hml     = FloatField()
+    return_from_mom      = FloatField(null=True)
 
     class Meta:
         table_name = "fund_skill_result"
@@ -503,4 +506,13 @@ def init_db(path: Path | None = None) -> SqliteDatabase:
         db.execute_sql("ALTER TABLE security ADD COLUMN sector TEXT")
     except Exception:
         pass  # column already present
+    for stmt in (
+        "ALTER TABLE fund_skill_result ADD COLUMN beta_mom REAL",
+        "ALTER TABLE fund_skill_result ADD COLUMN t_stat_mom REAL",
+        "ALTER TABLE fund_skill_result ADD COLUMN return_from_mom REAL",
+    ):
+        try:
+            db.execute_sql(stmt)
+        except Exception:
+            pass  # column already present
     return db

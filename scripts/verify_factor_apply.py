@@ -1,11 +1,11 @@
 """
-Verification: FF3 skill decomposition (factor_apply.py) for Module 3.
+Verification: FF4 skill decomposition (factor_apply.py) for Module 3.
 
 Two checks are run in sequence:
 
 Check 1 — Synthetic regression math
     Constructs synthetic quarterly fund returns from known alpha/beta parameters
-    using actual FF3 quarterly factors (2020Q1–2024Q4, 20 quarters).  The fund
+    using actual FF4 quarterly factors (2020Q1–2024Q4, 20 quarters).  The fund
     returns are deterministic (no noise), so OLS must recover the exact input
     parameters.  Confirms: factor aggregation, excess-return construction, regression
     setup, and decomposition identity.
@@ -31,7 +31,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import yfinance as yf
 
-from factor_engine.french_data import get_ff3_daily
+from factor_engine.french_data import get_ff4_daily
 from smart_money import edgar
 from smart_money.factor_apply import (
     MIN_QUARTERS_REG,
@@ -105,18 +105,20 @@ TRUE_ALPHA    = 0.010   # 1.0% quarterly = 4.0% annualised
 TRUE_BETA_MKT = 0.85
 TRUE_BETA_SMB = -0.30
 TRUE_BETA_HML =  0.10
+TRUE_BETA_MOM =  0.15
 
 
 def _build_synthetic_quarters() -> list[FundQuarterReturn]:
     """
-    Build 20 deterministic synthetic quarterly returns using actual FF3 factors.
+    Build 20 deterministic synthetic quarterly returns using actual FF4 factors.
 
     R_fund = RF_q + TRUE_ALPHA + TRUE_BETA_MKT * MktExcess_q
                   + TRUE_BETA_SMB * SMB_q + TRUE_BETA_HML * HML_q
+                  + TRUE_BETA_MOM * MOM_q
 
     No noise — OLS must recover parameters exactly (within floating-point).
     """
-    ff3 = get_ff3_daily(
+    ff4 = get_ff4_daily(
         _QUARTER_ENDS[0].isoformat(),
         _QUARTER_ENDS[-1].isoformat(),
     )
@@ -125,7 +127,7 @@ def _build_synthetic_quarters() -> list[FundQuarterReturn]:
     for i in range(1, len(_QUARTER_ENDS)):
         boq = _QUARTER_ENDS[i - 1]
         eoq = _QUARTER_ENDS[i]
-        fq  = _aggregate_quarter_factors(ff3, boq.isoformat(), eoq.isoformat())
+        fq  = _aggregate_quarter_factors(ff4, boq.isoformat(), eoq.isoformat())
         if fq is None:
             continue
         r_fund = (
@@ -134,6 +136,7 @@ def _build_synthetic_quarters() -> list[FundQuarterReturn]:
             + TRUE_BETA_MKT * fq["mkt_excess"]
             + TRUE_BETA_SMB * fq["smb"]
             + TRUE_BETA_HML * fq["hml"]
+            + TRUE_BETA_MOM * fq["mom"]
         )
         label = f"{eoq.year}Q{(eoq.month - 1) // 3 + 1}"
         quarters.append(FundQuarterReturn(
@@ -156,7 +159,7 @@ def run_check_1() -> None:
     print("Check 1 — Synthetic regression math")
     _sep("=")
     print(f"\n  True parameters:  alpha={TRUE_ALPHA:.3f}/qtr  β_mkt={TRUE_BETA_MKT:.2f}"
-          f"  β_smb={TRUE_BETA_SMB:.2f}  β_hml={TRUE_BETA_HML:.2f}")
+          f"  β_smb={TRUE_BETA_SMB:.2f}  β_hml={TRUE_BETA_HML:.2f}  β_mom={TRUE_BETA_MOM:.2f}")
     print(f"  Method: deterministic (no noise) — OLS must recover exact values\n")
 
     quarters = _build_synthetic_quarters()
@@ -176,6 +179,7 @@ def run_check_1() -> None:
         ("beta_market",      score["beta_market"],      TRUE_BETA_MKT),
         ("beta_smb",         score["beta_smb"],         TRUE_BETA_SMB),
         ("beta_hml",         score["beta_hml"],         TRUE_BETA_HML),
+        ("beta_mom",         score["beta_mom"],         TRUE_BETA_MOM),
     ]
 
     print(f"  {'Parameter':<20} {'Recovered':>10}  {'True':>8}  {'|Error|':>10}  {'Pass?'}")
@@ -190,12 +194,13 @@ def run_check_1() -> None:
         print(f"  {name:<20} {recovered:>10.7f}  {true_val:>8.4f}  {err:>10.2e}  {mark}")
     _sep()
 
-    # Decomposition identity: four components must sum to avg_excess_return_q.
+    # Decomposition identity: five components must sum to avg_excess_return_q.
     decomp_sum = (
         score["alpha_quarterly"]
         + score["return_from_market"]
         + score["return_from_smb"]
         + score["return_from_hml"]
+        + score["return_from_mom"]
     )
     decomp_err = abs(decomp_sum - score["avg_excess_return_q"])
     decomp_ok  = decomp_err < TOL
@@ -203,9 +208,9 @@ def run_check_1() -> None:
         all_ok = False
     mark = "✓" if decomp_ok else "✗ FAIL"
     print(f"\n  Decomposition identity check:")
-    print(f"    alpha + mkt + smb + hml = {decomp_sum:.8f}")
-    print(f"    avg_excess_return_q     = {score['avg_excess_return_q']:.8f}")
-    print(f"    |error|                 = {decomp_err:.2e}   {mark}\n")
+    print(f"    alpha + mkt + smb + hml + mom = {decomp_sum:.8f}")
+    print(f"    avg_excess_return_q           = {score['avg_excess_return_q']:.8f}")
+    print(f"    |error|                       = {decomp_err:.2e}   {mark}\n")
 
     print(f"  R² = {score['r_squared']:.6f}  (expected 1.000000 with no noise)")
     print(f"  n_quarters = {score['n_quarters']}\n")
@@ -411,7 +416,7 @@ def run_check_2() -> None:
 
     # ── Print skill score ─────────────────────────────────────────────────────
     print("=" * 72)
-    print(f"  {VIKING_NAME}  —  FF3 Skill Decomposition  [LOW COVERAGE / VERIFY ONLY]")
+    print(f"  {VIKING_NAME}  —  FF4 Skill Decomposition  [LOW COVERAGE / VERIFY ONLY]")
     print("=" * 72)
     print(f"  Quarters used   : {score['n_quarters']}  ({score['quarters_used'][0]} → {score['quarters_used'][-1]})")
     print(f"  Reliable?       : {score['is_reliable']}  (threshold = {MIN_QUARTERS_RELIABLE})")
@@ -425,6 +430,7 @@ def run_check_2() -> None:
     print(f"  β_market   : {score['beta_market']:+.4f}  (t = {score['t_stat_market']:+.3f})")
     print(f"  β_smb      : {score['beta_smb']:+.4f}  (t = {score['t_stat_smb']:+.3f})")
     print(f"  β_hml      : {score['beta_hml']:+.4f}  (t = {score['t_stat_hml']:+.3f})")
+    print(f"  β_mom      : {score['beta_mom']:+.4f}  (t = {score['t_stat_mom']:+.3f})")
     print(f"  R²         : {score['r_squared']:.4f}")
     print()
     print("  Historical attribution (avg quarterly excess return over sample):")
@@ -433,19 +439,21 @@ def run_check_2() -> None:
     print(f"  {'From market beta':<28} {_pct(score['return_from_market']):>10}")
     print(f"  {'From size factor (SMB)':<28} {_pct(score['return_from_smb']):>10}")
     print(f"  {'From value factor (HML)':<28} {_pct(score['return_from_hml']):>10}")
+    print(f"  {'From momentum factor (MOM)':<28} {_pct(score['return_from_mom']):>10}")
     print(f"  {'Alpha (skill)':<28} {_pct(score['alpha_quarterly']):>10}")
     _sep()
     decomp_sum = (
         score["return_from_market"]
         + score["return_from_smb"]
         + score["return_from_hml"]
+        + score["return_from_mom"]
         + score["alpha_quarterly"]
     )
     print(f"  {'Total (sum)':<28} {_pct(decomp_sum):>10}")
     print(f"  {'avg_excess_return_q':<28} {_pct(score['avg_excess_return_q']):>10}")
     decomp_err = abs(decomp_sum - score["avg_excess_return_q"])
-    # Each of the four components is rounded to 6dp independently, so up to
-    # 4 × 5e-7 = 2e-6 accumulated rounding error is expected on real data.
+    # Each of the five components is rounded to 6dp independently, so up to
+    # 5 × 5e-7 = 2.5e-6 accumulated rounding error is expected on real data.
     DECOMP_TOL = 1e-5
     print(f"  {'Decomposition error':<28} {decomp_err:.2e}   "
           f"{'✓' if decomp_err < DECOMP_TOL else '✗ FAIL'}  (tol {DECOMP_TOL:.0e})")
