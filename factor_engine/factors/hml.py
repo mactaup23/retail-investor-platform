@@ -28,16 +28,29 @@ HML factor is approximately 0.80–0.88 (lower than the ~0.85–0.90 we see for 
 IWM/IWB-based SMB series).  This is appropriate for a retail investor platform but
 should be noted when comparing factor loadings to academic benchmarks.
 
-Factor loading regression (Fama-French-Carhart 4-factor model)
+Factor loading regression (5-factor: FF3 + momentum + GP)
 ------------------------------------------------------------------
-compute_factor_loadings() fits a joint 4-factor OLS:
+compute_factor_loadings() fits a joint 5-factor OLS:
 
-    r_i − r_f = α + β_mkt·(Mkt-RF) + β_smb·SMB + β_hml·HML + β_mom·MOM + ε
+    r_i − r_f = α + β_mkt·(Mkt-RF) + β_smb·SMB + β_hml·HML + β_mom·MOM + β_gp·GP + ε
 
-All four betas are estimated in a single regression.  Running separate or paired
+All five betas are estimated in a single regression.  Running separate or paired
 regressions would omit correlated regressors and bias all estimates.  See
 factor_engine/factors/mom.py for the momentum factor construction and its
 ETF-proxy caveats.
+
+GP (Gross Profitability) is this platform's proprietary factor — see
+factor_engine/factors/gp.py for the Novy-Marx (2013) construction and why it
+was chosen over FCF yield (FCF yield penalizes growth-stage reinvestment;
+GP measures production-level economics before the capital-allocation
+decision, so it doesn't).  RMW/CMA (the Ken French quality/investment
+factors) are deliberately NOT included here — there is no clean single-ETF
+proxy for either, unlike SMB/HML/MOM's Russell/MTUM analogs, so this
+ETF-proxy individual-holding path uses GP as its sole quality/investment-style
+factor while the Ken-French-backed paths (factor_engine/portfolio.py,
+dashboard/factor.py, smart_money/factor_apply.py) use genuine RMW/CMA
+instead.  GP's own history is short (~2021-present, see gp.py) relative to
+the other four ETF-proxy factors here.
 """
 
 import pandas as pd
@@ -45,6 +58,7 @@ from statsmodels.regression.linear_model import OLS
 from statsmodels.tools import add_constant
 
 from factor_engine.data_loader import load_returns
+from factor_engine.factors.gp import build_gp_factor
 from factor_engine.factors.market import build_market_factor
 from factor_engine.factors.mom import build_mom_factor
 from factor_engine.factors.smb import build_smb_factor
@@ -83,9 +97,10 @@ def compute_factor_loadings(
     smb_factor: pd.DataFrame | None = None,
     hml_factor: pd.DataFrame | None = None,
     mom_factor: pd.DataFrame | None = None,
+    gp_factor: pd.DataFrame | None = None,
 ) -> dict:
     """
-    Estimate a stock's Fama-French-Carhart 4-factor loadings via joint OLS.
+    Estimate a stock's 5-factor (FF3 + momentum + GP) loadings via joint OLS.
 
     Parameters
     ----------
@@ -99,14 +114,19 @@ def compute_factor_loadings(
         Columns: value_return, growth_return, hml.
     mom_factor : optional pre-built MOM factor DataFrame
         Columns: momentum_return, benchmark_return, mom.
+    gp_factor : optional pre-built GP factor DataFrame
+        Columns: long_return, short_return, gp. See factor_engine/factors/gp.py —
+        coverage is bounded to ~2021-present, which will shrink n_obs (and
+        thus the whole regression's sample window, since this is a single
+        joint fit) for any [start, end] extending earlier.
 
     Returns
     -------
     dict with keys:
-        ticker, beta_market, beta_smb, beta_hml, beta_mom,
+        ticker, beta_market, beta_smb, beta_hml, beta_mom, beta_gp,
         alpha_annualised, r_squared,
-        t_stat_market, t_stat_smb, t_stat_hml, t_stat_mom,
-        p_value_market, p_value_smb, p_value_hml, p_value_mom,
+        t_stat_market, t_stat_smb, t_stat_hml, t_stat_mom, t_stat_gp,
+        p_value_market, p_value_smb, p_value_hml, p_value_mom, p_value_gp,
         n_obs, start, end
     """
     if market_factor is None:
@@ -117,6 +137,8 @@ def compute_factor_loadings(
         hml_factor = build_hml_factor(start, end)
     if mom_factor is None:
         mom_factor = build_mom_factor(start, end)
+    if gp_factor is None:
+        gp_factor = build_gp_factor(start, end)
 
     stock_returns = load_returns([ticker], start, end)[ticker]
 
@@ -127,10 +149,11 @@ def compute_factor_loadings(
         "smb":          smb_factor["smb"],
         "hml":          hml_factor["hml"],
         "mom":          mom_factor["mom"],
+        "gp":           gp_factor["gp"],
     }).dropna()
 
     stock_excess = combined["stock_return"] - combined["rf_rate"]
-    X = add_constant(combined[["mkt_excess", "smb", "hml", "mom"]])
+    X = add_constant(combined[["mkt_excess", "smb", "hml", "mom", "gp"]])
     model = OLS(stock_excess, X).fit()
 
     return {
@@ -139,16 +162,19 @@ def compute_factor_loadings(
         "beta_smb":         round(model.params["smb"], 4),
         "beta_hml":         round(model.params["hml"], 4),
         "beta_mom":         round(model.params["mom"], 4),
+        "beta_gp":          round(model.params["gp"], 4),
         "alpha_annualised": round(model.params["const"] * 252, 4),
         "r_squared":        round(model.rsquared, 4),
         "t_stat_market":    round(model.tvalues["mkt_excess"], 4),
         "t_stat_smb":       round(model.tvalues["smb"], 4),
         "t_stat_hml":       round(model.tvalues["hml"], 4),
         "t_stat_mom":       round(model.tvalues["mom"], 4),
+        "t_stat_gp":        round(model.tvalues["gp"], 4),
         "p_value_market":   round(model.pvalues["mkt_excess"], 6),
         "p_value_smb":      round(model.pvalues["smb"], 6),
         "p_value_hml":      round(model.pvalues["hml"], 6),
         "p_value_mom":      round(model.pvalues["mom"], 6),
+        "p_value_gp":       round(model.pvalues["gp"], 6),
         "n_obs":            int(model.nobs),
         "start":            start,
         "end":              end,

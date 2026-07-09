@@ -1,16 +1,20 @@
 """
-Portfolio page — Fama-French-Carhart 4-factor analysis of the user's editable portfolio.
+Portfolio page — 7-factor analysis (Fama-French 5 + Carhart momentum + proprietary
+Gross Profitability) of the user's editable portfolio.
 
 Layout
 ------
 Holdings:    manual ticker/weight editor (add, remove, CSV import) — persisted
              to data/user_prefs.json under the "portfolio" key
 Header row:  date range inputs + Refresh button + last-analysed timestamp
-Factor row:  β_mkt · β_smb · β_hml · R² · Alpha metric cards
+Factor row:  β_mkt · β_smb · β_hml · β_rmw · β_cma · β_mom · β_gp · R² · Alpha metric cards
+             (β_gp labeled "Gross Profitability, 2021–present" — shorter history than
+             the other six factors)
 Summary:     plain-English interpretation from the factor engine
 Attribution: stacked bar chart (weighted beta contributions per holding)
              + full per-holding table
-Stress tests: three scenario cards (2008 · COVID · 2022 Rate Hikes)
+Stress tests: three scenario cards (2008 · COVID · 2022 Rate Hikes) — GP's contribution
+             is omitted (not zeroed) for scenarios predating its coverage
 
 Data flow
 ---------
@@ -82,16 +86,30 @@ def _render_stress_card(scenario: dict) -> None:
         mkt  = scenario.get("mkt_contrib", 0)
         smb  = scenario.get("smb_contrib", 0)
         hml  = scenario.get("hml_contrib", 0)
+        rmw  = scenario.get("rmw_contrib", 0)
+        cma  = scenario.get("cma_contrib", 0)
         mom  = scenario.get("mom_contrib", 0)
         rf   = scenario.get("rf_contrib", 0)
         alph = scenario.get("alpha_contrib", 0)
-        st.caption(
+        gp_available = scenario.get("gp_available", False)
+        gp   = scenario.get("gp_contrib")
+        decomp_line = (
             f"Decomposition — Market: {mkt * 100:+.1f}%  "
             f"SMB: {smb * 100:+.1f}%  "
             f"HML: {hml * 100:+.1f}%  "
+            f"RMW: {rmw * 100:+.1f}%  "
+            f"CMA: {cma * 100:+.1f}%  "
             f"MOM: {mom * 100:+.1f}%  "
             f"RF: {rf * 100:+.1f}%"
         )
+        if gp_available and gp is not None:
+            decomp_line += f"  Gross Profitability (2021–present): {gp * 100:+.1f}%"
+        st.caption(decomp_line)
+        if not gp_available:
+            st.caption(
+                ":gray[Gross Profitability (2021–present) has insufficient history to cover "
+                "this scenario — omitted from the estimate above rather than treated as zero.]"
+            )
         st.caption(
             ":gray[Model-based risk characterisation using current betas applied to "
             "historical factor returns. Not a backtest — the portfolio didn't exist then.]"
@@ -109,7 +127,10 @@ def _run_analysis(start: str, end: str, weights: dict[str, float]) -> dict:
         beta_market=h["beta_market"],
         beta_smb=h["beta_smb"],
         beta_hml=h["beta_hml"],
+        beta_rmw=h["beta_rmw"],
+        beta_cma=h["beta_cma"],
         beta_mom=h["beta_mom"],
+        beta_gp=h["beta_gp"],
         alpha_daily=h["alpha_daily"],
     )
     analysis_cache.save(results, stress)
@@ -345,15 +366,23 @@ with st.container(horizontal=True):
     st.metric("β market",    f"{headline['beta_market']:+.3f}",  border=True)
     st.metric("β SMB",       f"{headline['beta_smb']:+.3f}",     border=True)
     st.metric("β HML",       f"{headline['beta_hml']:+.3f}",     border=True)
+    st.metric("β RMW",       f"{headline['beta_rmw']:+.3f}",     border=True)
+    st.metric("β CMA",       f"{headline['beta_cma']:+.3f}",     border=True)
     st.metric("β MOM",       f"{headline['beta_mom']:+.3f}",     border=True)
+    st.metric(
+        "β GP", f"{headline['beta_gp']:+.3f}", border=True,
+        help="Gross Profitability (2021–present) — proprietary factor, materially shorter "
+             "history than the other six. Treat as directional.",
+    )
     st.metric("R²",          f"{headline['r_squared']:.3f}",     border=True)
     st.metric("Alpha (ann.)", _pct(headline["alpha_annualised"]), border=True)
 
 st.caption(
-    f"FF4 model fit: R² = {headline['r_squared']:.3f} explains "
+    f"7-factor model fit: R² = {headline['r_squared']:.3f} explains "
     f"{headline['r_squared'] * 100:.1f}% of daily portfolio variance  ·  "
     f"n = {headline['n_obs']} trading days  ·  "
-    f"Period: {data['start']} → {data['end']}"
+    f"Period: {data['start']} → {data['end']}  ·  "
+    f"GP is Gross Profitability (2021–present)"
 )
 
 # Plain-English summary
@@ -369,8 +398,10 @@ st.subheader("Per-holding attribution")
 
 per_holding = data["per_holding"]
 ph_df = pd.DataFrame(per_holding)[
-    ["ticker", "weight", "beta_market", "beta_smb", "beta_hml", "beta_mom",
-     "wtd_beta_market", "wtd_beta_smb", "wtd_beta_hml", "wtd_beta_mom",
+    ["ticker", "weight", "beta_market", "beta_smb", "beta_hml", "beta_rmw", "beta_cma",
+     "beta_mom", "beta_gp",
+     "wtd_beta_market", "wtd_beta_smb", "wtd_beta_hml", "wtd_beta_rmw", "wtd_beta_cma",
+     "wtd_beta_mom", "wtd_beta_gp",
      "alpha_annualised", "r_squared", "factor_basis"]
 ].copy()
 ph_df["weight_pct"] = (ph_df["weight"] * 100).round(2)
@@ -384,7 +415,11 @@ chart_df = pd.DataFrame([
         {"ticker": r["ticker"], "factor": "β market", "contribution": r["wtd_beta_market"]},
         {"ticker": r["ticker"], "factor": "β SMB",    "contribution": r["wtd_beta_smb"]},
         {"ticker": r["ticker"], "factor": "β HML",    "contribution": r["wtd_beta_hml"]},
+        {"ticker": r["ticker"], "factor": "β RMW",    "contribution": r["wtd_beta_rmw"]},
+        {"ticker": r["ticker"], "factor": "β CMA",    "contribution": r["wtd_beta_cma"]},
         {"ticker": r["ticker"], "factor": "β MOM",    "contribution": r["wtd_beta_mom"]},
+        {"ticker": r["ticker"], "factor": "β GP (Gross Profitability, 2021–present)",
+         "contribution": r["wtd_beta_gp"]},
     ]
 ])
 
@@ -397,8 +432,9 @@ bar_chart = (
         color=alt.Color(
             "factor:N",
             scale=alt.Scale(
-                domain=["β market", "β SMB", "β HML", "β MOM"],
-                range=["#60A5FA", "#34D399", "#A78BFA", "#FBBF24"],
+                domain=["β market", "β SMB", "β HML", "β RMW", "β CMA", "β MOM",
+                        "β GP (Gross Profitability, 2021–present)"],
+                range=["#60A5FA", "#34D399", "#A78BFA", "#F472B6", "#38BDF8", "#FBBF24", "#FB923C"],
             ),
             legend=alt.Legend(title=None),
         ),
@@ -416,40 +452,55 @@ st.dataframe(
         "beta_market":     "β market",
         "beta_smb":        "β SMB",
         "beta_hml":        "β HML",
+        "beta_rmw":        "β RMW",
+        "beta_cma":        "β CMA",
         "beta_mom":        "β MOM",
+        "beta_gp":         "β GP (2021–present)",
         "wtd_beta_market": "Wtd β mkt",
         "wtd_beta_smb":    "Wtd β SMB",
         "wtd_beta_hml":    "Wtd β HML",
+        "wtd_beta_rmw":    "Wtd β RMW",
+        "wtd_beta_cma":    "Wtd β CMA",
         "wtd_beta_mom":    "Wtd β MOM",
+        "wtd_beta_gp":     "Wtd β GP (2021–present)",
         "alpha_annualised":"Alpha (ann.)",
         "r_squared":       "R²",
         "factor_basis":    "Factor basis",
     }),
     hide_index=True,
     column_config={
-        "Weight %":     st.column_config.NumberColumn(format="%.2f%%"),
-        "β market":     st.column_config.NumberColumn(format="%.4f"),
-        "β SMB":        st.column_config.NumberColumn(format="%.4f"),
-        "β HML":        st.column_config.NumberColumn(format="%.4f"),
-        "β MOM":        st.column_config.NumberColumn(format="%.4f"),
-        "Wtd β mkt":    st.column_config.NumberColumn(format="%.4f"),
-        "Wtd β SMB":    st.column_config.NumberColumn(format="%.4f"),
-        "Wtd β HML":    st.column_config.NumberColumn(format="%.4f"),
-        "Wtd β MOM":    st.column_config.NumberColumn(format="%.4f"),
-        "Alpha (ann.)": st.column_config.NumberColumn(format="%+.4f"),
-        "R²":           st.column_config.NumberColumn(format="%.4f"),
+        "Weight %":              st.column_config.NumberColumn(format="%.2f%%"),
+        "β market":              st.column_config.NumberColumn(format="%.4f"),
+        "β SMB":                 st.column_config.NumberColumn(format="%.4f"),
+        "β HML":                 st.column_config.NumberColumn(format="%.4f"),
+        "β RMW":                 st.column_config.NumberColumn(format="%.4f"),
+        "β CMA":                 st.column_config.NumberColumn(format="%.4f"),
+        "β MOM":                 st.column_config.NumberColumn(format="%.4f"),
+        "β GP (2021–present)":   st.column_config.NumberColumn(format="%.4f"),
+        "Wtd β mkt":             st.column_config.NumberColumn(format="%.4f"),
+        "Wtd β SMB":             st.column_config.NumberColumn(format="%.4f"),
+        "Wtd β HML":             st.column_config.NumberColumn(format="%.4f"),
+        "Wtd β RMW":             st.column_config.NumberColumn(format="%.4f"),
+        "Wtd β CMA":             st.column_config.NumberColumn(format="%.4f"),
+        "Wtd β MOM":             st.column_config.NumberColumn(format="%.4f"),
+        "Wtd β GP (2021–present)": st.column_config.NumberColumn(format="%.4f"),
+        "Alpha (ann.)":          st.column_config.NumberColumn(format="%+.4f"),
+        "R²":                    st.column_config.NumberColumn(format="%.4f"),
     },
 )
 _intl_tickers = [r["ticker"] for r in per_holding if "intl" in r["factor_basis"]]
 _intl_note = (
-    f" {', '.join(_intl_tickers)} {'uses' if len(_intl_tickers) == 1 else 'use'} US FF4 factors "
+    f" {', '.join(_intl_tickers)} {'uses' if len(_intl_tickers) == 1 else 'use'} US FF7 factors "
     "as an approximation (international ETF — labeled in Factor basis column)."
     if _intl_tickers else ""
 )
 st.caption(
     "Weighted betas (Wtd β) = individual ticker beta × portfolio weight. "
     "Their sum approximates — but won't exactly match — the headline portfolio betas, "
-    "because independent regressions share the same factor matrix but not the same residual structure."
+    "because independent regressions share the same factor matrix but not the same residual structure. "
+    "GP (Gross Profitability) is labeled '2021–present' throughout — its coverage is materially "
+    "shorter than the other six factors, so treat its beta as directional rather than a robust "
+    "multi-decade estimate."
     + _intl_note
 )
 
@@ -471,7 +522,10 @@ if not stress:
                 beta_market=h["beta_market"],
                 beta_smb=h["beta_smb"],
                 beta_hml=h["beta_hml"],
+                beta_rmw=h["beta_rmw"],
+                beta_cma=h["beta_cma"],
                 beta_mom=h["beta_mom"],
+                beta_gp=h["beta_gp"],
                 alpha_daily=h["alpha_daily"],
             )
             data["stress_tests"] = stress

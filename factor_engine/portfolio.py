@@ -1,24 +1,38 @@
 """
-Portfolio-level Fama-French-Carhart 4-factor analysis.
+Portfolio-level 7-factor analysis (Fama-French 5 + Carhart momentum + GP).
 
 Two complementary views are produced:
 
 1. Combined return series (Tier 1 headline)
    The portfolio's daily return is constructed as the weight-averaged sum of
-   individual holding log returns.  One joint FF4 regression on that combined
-   series gives the portfolio's effective factor exposures, capturing the
-   diversification effect (cross-holding correlations).
+   individual holding log returns.  One joint 7-factor regression on that
+   combined series gives the portfolio's effective factor exposures,
+   capturing the diversification effect (cross-holding correlations).
 
 2. Per-holding attribution (Tier 2)
-   FF4 is run independently on each holding.  Weighted-average contributions
-   (weight × beta) explain *which positions drive each factor tilt*.  The sum
-   of weighted betas approximates — but will not exactly match — the headline
-   betas because the combined-series regression and independent regressions share
-   the same factor matrix but not the same residual structure.
+   The 7-factor model is run independently on each holding.  Weighted-average
+   contributions (weight × beta) explain *which positions drive each factor
+   tilt*.  The sum of weighted betas approximates — but will not exactly
+   match — the headline betas because the combined-series regression and
+   independent regressions share the same factor matrix but not the same
+   residual structure.
 
-Factor data source: official Ken French daily series (factor_engine/french_data.py)
-rather than ETF proxies, for maximum accuracy.  Regression is Fama-French-Carhart
-4-factor (adds momentum) via get_ff4_daily().
+Factor data source: official Ken French daily series for mkt/smb/hml/rmw/cma/mom
+(factor_engine/french_data.py::get_ff7_daily()) rather than ETF proxies, for
+maximum accuracy, plus this platform's proprietary GP (Gross Profitability)
+factor (factor_engine/factors/gp.py) — there is no Ken French analog for GP.
+
+GP coverage caveat: GP's own history is bounded to roughly 2021-present
+(vs. full history for the other six factors), materially shorter than this
+module's default analysis window start (2021-01-04) — so in practice the
+window already sits inside GP's coverage and no special handling is needed
+here beyond the existing dropna() in run_headline_regression()/
+run_per_holding_regressions(), which naturally trims to whatever rows have
+data for all seven factors.  Callers requesting an earlier start should
+expect the effective sample to begin wherever GP coverage actually starts,
+not the requested date — this is different from smart_money/factor_apply.py,
+which needs a two-tier regression because fund histories there commonly
+predate 2021 by many years (see that module's docstring).
 """
 
 import numpy as np
@@ -27,7 +41,7 @@ from statsmodels.regression.linear_model import OLS
 from statsmodels.tools import add_constant
 
 from factor_engine.data_loader import load_returns
-from factor_engine.french_data import get_ff4_daily
+from factor_engine.french_data import get_ff7_daily
 
 # ---------------------------------------------------------------------------
 # Portfolio definition
@@ -50,7 +64,7 @@ _TOTAL = sum(_RAW_WEIGHTS.values())
 WEIGHTS: dict[str, float] = {t: w / _TOTAL for t, w in _RAW_WEIGHTS.items()}
 
 # Common international / global-ex-US equity ETFs.  See factor_engine/french_data.py
-# for the full methodology note on why these use US FF4 factors rather than a
+# for the full methodology note on why these use US FF7 factors rather than a
 # regional blend (Ken French doesn't publish a matching "developed ex-US" daily
 # series; correlation with US factors is r ≈ 0.70–0.85). This is a maintained
 # list rather than live category lookups, since yfinance's category/fund-family
@@ -68,7 +82,7 @@ def _is_international_ticker(ticker: str) -> bool:
 
 
 def _factor_basis_label(ticker: str) -> str:
-    return "US FF4 (intl. approx.)" if _is_international_ticker(ticker) else "US FF4"
+    return "US FF7 (intl. approx.)" if _is_international_ticker(ticker) else "US FF7"
 
 
 FACTOR_BASIS_LABEL: dict[str, str] = {t: _factor_basis_label(t) for t in WEIGHTS}
@@ -87,35 +101,37 @@ def _align_returns_and_factors(
     return combined
 
 
-def _run_ff4_ols(
+def _run_ff7_ols(
     excess_returns: pd.Series,
     factors: pd.DataFrame,
 ) -> dict:
     """
-    Fit: excess_return = α + β_mkt·mkt_excess + β_smb·smb + β_hml·hml + β_mom·mom + ε
+    Fit: excess_return = α + β_mkt·mkt_excess + β_smb·smb + β_hml·hml
+                        + β_rmw·rmw + β_cma·cma + β_mom·mom + β_gp·gp + ε
 
     Returns a dict with all regression outputs.
     """
-    X = add_constant(factors[["mkt_excess", "smb", "hml", "mom"]])
+    factor_cols = ["mkt_excess", "smb", "hml", "rmw", "cma", "mom", "gp"]
+    X = add_constant(factors[factor_cols])
     model = OLS(excess_returns, X).fit()
-    return {
+    result = {
         "beta_market":      round(model.params["mkt_excess"], 4),
         "beta_smb":         round(model.params["smb"], 4),
         "beta_hml":         round(model.params["hml"], 4),
+        "beta_rmw":         round(model.params["rmw"], 4),
+        "beta_cma":         round(model.params["cma"], 4),
         "beta_mom":         round(model.params["mom"], 4),
+        "beta_gp":          round(model.params["gp"], 4),
         "alpha_daily":      model.params["const"],
         "alpha_annualised": round(model.params["const"] * 252, 4),
         "r_squared":        round(model.rsquared, 4),
-        "t_stat_market":    round(model.tvalues["mkt_excess"], 4),
-        "t_stat_smb":       round(model.tvalues["smb"], 4),
-        "t_stat_hml":       round(model.tvalues["hml"], 4),
-        "t_stat_mom":       round(model.tvalues["mom"], 4),
-        "p_value_market":   round(model.pvalues["mkt_excess"], 6),
-        "p_value_smb":      round(model.pvalues["smb"], 6),
-        "p_value_hml":      round(model.pvalues["hml"], 6),
-        "p_value_mom":      round(model.pvalues["mom"], 6),
         "n_obs":            int(model.nobs),
     }
+    for col, key in (("mkt_excess", "market"), ("smb", "smb"), ("hml", "hml"),
+                     ("rmw", "rmw"), ("cma", "cma"), ("mom", "mom"), ("gp", "gp")):
+        result[f"t_stat_{key}"] = round(model.tvalues[col], 4)
+        result[f"p_value_{key}"] = round(model.pvalues[col], 6)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -170,11 +186,50 @@ def _interpret_beta_hml(b: float) -> str:
     return f"significant value tilt ({b:+.2f}) — tailwind in rising-rate environments"
 
 
+def _interpret_beta_rmw(b: float) -> str:
+    if b < -0.20:
+        return f"weak-profitability tilt ({b:+.2f}) — leans toward lower-margin businesses"
+    if b < -0.05:
+        return f"mild weak-profitability tilt ({b:+.2f})"
+    if b <= 0.05:
+        return f"profitability-neutral ({b:+.2f})"
+    if b <= 0.20:
+        return f"mild robust-profitability tilt ({b:+.2f})"
+    return f"strong robust-profitability tilt ({b:+.2f}) — leans toward highly profitable businesses"
+
+
+def _interpret_beta_cma(b: float) -> str:
+    if b < -0.20:
+        return f"aggressive-investment tilt ({b:+.2f}) — leans toward high-capex/acquisitive companies"
+    if b < -0.05:
+        return f"mild aggressive-investment tilt ({b:+.2f})"
+    if b <= 0.05:
+        return f"investment-neutral ({b:+.2f})"
+    if b <= 0.20:
+        return f"mild conservative-investment tilt ({b:+.2f})"
+    return f"strong conservative-investment tilt ({b:+.2f}) — leans toward disciplined capital allocators"
+
+
+def _interpret_beta_gp(b: float) -> str:
+    if b < -0.20:
+        return f"low-gross-margin tilt ({b:+.2f}) — leans toward commodity-economics businesses"
+    if b < -0.05:
+        return f"mild low-gross-margin tilt ({b:+.2f})"
+    if b <= 0.05:
+        return f"gross-margin-neutral ({b:+.2f})"
+    if b <= 0.20:
+        return f"mild high-gross-margin tilt ({b:+.2f})"
+    return f"strong high-gross-margin tilt ({b:+.2f}) — leans toward businesses with superior unit economics"
+
+
 def generate_plain_english_summary(headline: dict, per_holding: list[dict]) -> str:
     bm  = headline["beta_market"]
     bsmb = headline["beta_smb"]
     bhml = headline["beta_hml"]
+    brmw = headline["beta_rmw"]
+    bcma = headline["beta_cma"]
     bmom = headline["beta_mom"]
+    bgp  = headline["beta_gp"]
     alpha_pct = headline["alpha_annualised"] * 100
     r2 = headline["r_squared"]
 
@@ -186,7 +241,10 @@ def generate_plain_english_summary(headline: dict, per_holding: list[dict]) -> s
     mkt_drivers  = top_contributors("beta_market")
     smb_drivers  = top_contributors("beta_smb")
     hml_drivers  = top_contributors("beta_hml")
+    rmw_drivers  = top_contributors("beta_rmw")
+    cma_drivers  = top_contributors("beta_cma")
     mom_drivers  = top_contributors("beta_mom")
+    gp_drivers   = top_contributors("beta_gp")
 
     # Growth/value split for HML narrative
     value_holders  = [r["ticker"] for r in per_holding if r["beta_hml"] > 0.10]
@@ -202,8 +260,18 @@ def generate_plain_english_summary(headline: dict, per_holding: list[dict]) -> s
         "Value / growth tilt:",
         f"  {_interpret_beta_hml(bhml)}.",
         "",
+        "Profitability tilt (RMW):",
+        f"  {_interpret_beta_rmw(brmw)}.  Driven by: {rmw_drivers}.",
+        "",
+        "Investment tilt (CMA):",
+        f"  {_interpret_beta_cma(bcma)}.  Driven by: {cma_drivers}.",
+        "",
         "Momentum tilt:",
         f"  {_interpret_beta_mom(bmom)}.  Driven by: {mom_drivers}.",
+        "",
+        "Gross profitability tilt (GP, proprietary):",
+        f"  {_interpret_beta_gp(bgp)}.  Driven by: {gp_drivers}.",
+        f"  Note: GP has ~2021-present coverage only, shorter than the other six factors — treat this loading as more directional, less statistically established.",
     ]
     if value_holders and growth_holders:
         lines.append(
@@ -217,7 +285,7 @@ def generate_plain_english_summary(headline: dict, per_holding: list[dict]) -> s
 
     lines += [
         "",
-        f"Model fit: R² = {r2:.3f}  |  FF4 explains {r2 * 100:.1f}% of daily portfolio variance.",
+        f"Model fit: R² = {r2:.3f}  |  the 7-factor model explains {r2 * 100:.1f}% of daily portfolio variance.",
         f"Alpha: {alpha_pct:+.2f}% annualised (unexplained excess return above factor exposures).",
     ]
 
@@ -258,10 +326,10 @@ def run_headline_regression(
     start: str,
     end: str,
 ) -> dict:
-    """FF4 regression on the combined portfolio return series (Tier 1)."""
+    """7-factor regression on the combined portfolio return series (Tier 1)."""
     combined = portfolio_returns.to_frame().join(factors, how="inner").dropna()
     excess = combined["portfolio"] - combined["rf"]
-    result = _run_ff4_ols(excess, combined)
+    result = _run_ff7_ols(excess, combined)
     result.update({"start": start, "end": end})
     return result
 
@@ -273,7 +341,7 @@ def run_per_holding_regressions(
     weights: dict[str, float],
 ) -> list[dict]:
     """
-    FF4 regression for each holding individually (Tier 2 attribution).
+    7-factor regression for each holding individually (Tier 2 attribution).
 
     Returns a list of dicts, one per ticker, including the weighted beta
     contributions.
@@ -283,7 +351,7 @@ def run_per_holding_regressions(
         ticker_rets = load_returns([ticker], start, end)[ticker]
         combined = ticker_rets.to_frame("stock").join(factors, how="inner").dropna()
         excess = combined["stock"] - combined["rf"]
-        reg = _run_ff4_ols(excess, combined)
+        reg = _run_ff7_ols(excess, combined)
         reg.update({
             "ticker":           ticker,
             "weight":           weight,
@@ -291,7 +359,10 @@ def run_per_holding_regressions(
             "wtd_beta_market":  round(weight * reg["beta_market"], 4),
             "wtd_beta_smb":     round(weight * reg["beta_smb"], 4),
             "wtd_beta_hml":     round(weight * reg["beta_hml"], 4),
+            "wtd_beta_rmw":     round(weight * reg["beta_rmw"], 4),
+            "wtd_beta_cma":     round(weight * reg["beta_cma"], 4),
             "wtd_beta_mom":     round(weight * reg["beta_mom"], 4),
+            "wtd_beta_gp":      round(weight * reg["beta_gp"], 4),
         })
         results.append(reg)
     return results
@@ -333,10 +404,10 @@ def analyze_portfolio(
     total_raw = sum(raw_weights.values())
     norm_weights = {t: w / total_raw for t, w in raw_weights.items()}
 
-    print(f"Fetching Fama-French factor data ({start} → {end})...")
-    factors = get_ff4_daily(start, end)
+    print(f"Fetching 7-factor data ({start} → {end})...")
+    factors = get_ff7_daily(start, end)
     if factors.empty:
-        raise ValueError(f"No French FF4 data returned for {start}–{end}")
+        raise ValueError(f"No factor data returned for {start}–{end}")
 
     print(f"Fetching price data for {list(norm_weights.keys())}...")
     all_returns = load_returns(list(norm_weights.keys()), start, end)
@@ -344,10 +415,10 @@ def analyze_portfolio(
     print("Building combined portfolio return series...")
     combined_rets = build_combined_return_series(all_returns, norm_weights)
 
-    print("Running headline (combined series) FF4 regression...")
+    print("Running headline (combined series) 7-factor regression...")
     headline = run_headline_regression(combined_rets, factors, start, end)
 
-    print("Running per-holding FF4 regressions...")
+    print("Running per-holding 7-factor regressions...")
     per_holding = run_per_holding_regressions(factors, start, end, norm_weights)
 
     summary_text = generate_plain_english_summary(headline, per_holding)

@@ -2,12 +2,16 @@
 Factor engine integration for the dashboard.
 
 Public functions:
-    portfolio_ff3_betas(weights)   — portfolio headline FF4 betas for given weights (cache_resource)
+    portfolio_ff3_betas(weights)   — portfolio headline 7-factor betas for given weights (cache_resource)
     current_portfolio_betas()      — portfolio_ff3_betas() for the user's saved portfolio (data/user_prefs.json)
-    ticker_ff3_profile(t)          — single-ticker FF4 OLS regression (cache_data: 24h)
+    ticker_ff3_profile(t)          — single-ticker 7-factor OLS regression (cache_data: 24h)
 
 Function names kept as "_ff3_" for continuity with existing dashboard callers;
-both now run the Fama-French-Carhart 4-factor regression (adds momentum).
+both now run the full 7-factor model: Fama-French 5 (market, size, value,
+profitability, investment) + Carhart momentum + this platform's proprietary
+GP (Gross Profitability) factor.  GP has materially shorter history
+(~2021-present, see factor_engine/factors/gp.py) than the other six factors
+— label any GP-specific display "Gross Profitability (2021-present)".
 
 portfolio_ff3_betas() is a cache_resource singleton so it runs exactly once per
 server process regardless of how many sessions are open.  pre-warming it in
@@ -33,7 +37,7 @@ _ANALYSIS_END   = "2024-12-31"
 @st.cache_resource(show_spinner=False)
 def portfolio_ff3_betas(weights: dict[str, float] | None = None) -> dict | None:
     """
-    Portfolio headline FF4 betas for the given weights.  Cached per distinct
+    Portfolio headline 7-factor betas for the given weights.  Cached per distinct
     weights dict (once per server process for that portfolio).
 
     Parameters
@@ -41,9 +45,10 @@ def portfolio_ff3_betas(weights: dict[str, float] | None = None) -> dict | None:
     weights : ticker -> raw weight dict. Defaults to the hardcoded example
         portfolio (factor_engine.portfolio.WEIGHTS) when omitted.
 
-    Returns the same dict structure as factor_engine.portfolio._run_ff4_ols():
-        beta_market, beta_smb, beta_hml, beta_mom, alpha_annualised, r_squared,
-        t_stat_market, t_stat_smb, t_stat_hml, t_stat_mom, n_obs, start, end
+    Returns the same dict structure as factor_engine.portfolio._run_ff7_ols():
+        beta_market, beta_smb, beta_hml, beta_rmw, beta_cma, beta_mom, beta_gp,
+        alpha_annualised, r_squared, t_stat_market, t_stat_smb, t_stat_hml,
+        t_stat_rmw, t_stat_cma, t_stat_mom, t_stat_gp, n_obs, start, end
     Returns None on failure (missing dependencies, network error, etc.).
     """
     from dashboard.holdings import normalize_weights_dict
@@ -90,23 +95,28 @@ def current_portfolio_betas() -> dict | None:
 @st.cache_data(ttl=86400, show_spinner=False)
 def ticker_ff3_profile(ticker: str) -> dict | None:
     """
-    Fama-French-Carhart 4-factor regression for a single ticker.
+    Full 7-factor regression for a single ticker (Fama-French 5 + Carhart
+    momentum + proprietary GP).
 
-    Uses the French FF4 daily factor series (get_ff4_daily(), cached on disk
-    at data/french/us_ff3_daily.csv + us_mom_daily.csv) and loads ticker price
-    history via data_loader (CSV cache then yfinance fallback).  The loaded
-    CSV is saved to data/ so subsequent calls are instantaneous.
+    Uses get_ff7_daily() (Ken French series cached at data/french/, GP series
+    cached at data/gp/) and loads ticker price history via data_loader (CSV
+    cache then yfinance fallback).  The loaded CSV is saved to data/ so
+    subsequent calls are instantaneous.
 
     Returns None gracefully for: new IPOs, delisted tickers, < 60 trading days
-    of overlapping data, or any other failure.
+    of overlapping data, or any other failure.  Because GP's own coverage is
+    bounded to ~2021-present (materially shorter than the other six factors),
+    the effective sample here is capped at whatever the dropna() below leaves
+    — for the default _ANALYSIS_START of 2021-01-04 this is a minor trim, not
+    a structural gap.
     """
     try:
-        from factor_engine.french_data import get_ff4_daily
+        from factor_engine.french_data import get_ff7_daily
         from factor_engine.data_loader import load_returns
         from statsmodels.regression.linear_model import OLS
         from statsmodels.tools import add_constant
 
-        factors = get_ff4_daily(_ANALYSIS_START, _ANALYSIS_END)
+        factors = get_ff7_daily(_ANALYSIS_START, _ANALYSIS_END)
         rets    = load_returns([ticker], _ANALYSIS_START, _ANALYSIS_END)
         if ticker not in rets.columns or rets[ticker].isna().all():
             return None
@@ -121,24 +131,28 @@ def ticker_ff3_profile(ticker: str) -> dict | None:
             return None
 
         excess = aligned["stock"] - aligned["rf"]
-        X = add_constant(aligned[["mkt_excess", "smb", "hml", "mom"]])
+        factor_cols = ["mkt_excess", "smb", "hml", "rmw", "cma", "mom", "gp"]
+        X = add_constant(aligned[factor_cols])
         m = OLS(excess, X).fit()
 
-        return {
+        profile = {
             "ticker":           ticker,
             "beta_market":      round(m.params["mkt_excess"], 3),
             "beta_smb":         round(m.params["smb"],        3),
             "beta_hml":         round(m.params["hml"],        3),
+            "beta_rmw":         round(m.params["rmw"],        3),
+            "beta_cma":         round(m.params["cma"],        3),
             "beta_mom":         round(m.params["mom"],        3),
+            "beta_gp":          round(m.params["gp"],         3),
             "alpha_annualized": round(m.params["const"] * 252, 4),
             "r_squared":        round(m.rsquared,             3),
-            "t_stat_market":    round(m.tvalues["mkt_excess"], 2),
-            "t_stat_smb":       round(m.tvalues["smb"],        2),
-            "t_stat_hml":       round(m.tvalues["hml"],        2),
-            "t_stat_mom":       round(m.tvalues["mom"],        2),
             "n_obs":            int(m.nobs),
             "start":            _ANALYSIS_START,
             "end":              _ANALYSIS_END,
         }
+        for col, key in (("mkt_excess", "market"), ("smb", "smb"), ("hml", "hml"),
+                         ("rmw", "rmw"), ("cma", "cma"), ("mom", "mom"), ("gp", "gp")):
+            profile[f"t_stat_{key}"] = round(m.tvalues[col], 2)
+        return profile
     except Exception:
         return None

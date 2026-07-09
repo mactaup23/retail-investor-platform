@@ -230,13 +230,26 @@ class PriceCache(BaseModel):
 
 class FundSkillResult(BaseModel):
     """
-    FF4 skill decomposition scores written by the pipeline (Phase 5).
+    7-factor skill decomposition scores written by the pipeline (Phase 5).
 
     One row per fund; INSERT OR REPLACE semantics mean each pipeline run
     overwrites the previous score.  Module 4 reads this table directly
     for signal weighting rather than recomputing scores on every request.
 
     quarters_used is JSON-encoded, e.g. '["2023Q1","2023Q2","2024Q1"]'.
+
+    beta_rmw/cma come from a primary 6-factor (mkt+smb+hml+mom+rmw+cma)
+    regression run over the fund's full available quarterly history — same
+    sample depth as the prior FF4 spec, just two more Ken-French factors.
+    beta_gp comes from a SEPARATE secondary regression restricted to the
+    subset of those quarters that fall within GP's own coverage window
+    (~2021-present) — GP has no Ken French analog and materially shorter
+    history than the other six factors, so a single joint 7-factor fit isn't
+    possible without truncating funds' pre-2021 history. n_quarters_gp
+    records how many quarters fed that secondary fit; beta_gp/t_stat_gp/
+    return_from_gp are null when too few GP-covered quarters exist. See
+    smart_money/factor_apply.py docstring for the full two-tier rationale —
+    never display beta_gp without noting its shorter, less reliable window.
     """
 
     fund             = ForeignKeyField(Fund, backref="skill_result", unique=True)
@@ -253,16 +266,26 @@ class FundSkillResult(BaseModel):
     beta_smb         = FloatField()
     beta_hml         = FloatField()
     beta_mom         = FloatField(null=True)
+    beta_rmw         = FloatField(null=True)
+    beta_cma         = FloatField(null=True)
+    beta_gp          = FloatField(null=True)
     t_stat_market    = FloatField()
     t_stat_smb       = FloatField()
     t_stat_hml       = FloatField()
     t_stat_mom       = FloatField(null=True)
+    t_stat_rmw       = FloatField(null=True)
+    t_stat_cma       = FloatField(null=True)
+    t_stat_gp        = FloatField(null=True)
     r_squared        = FloatField()
     avg_excess_return_q = FloatField()
     return_from_market  = FloatField()
     return_from_smb     = FloatField()
     return_from_hml     = FloatField()
     return_from_mom      = FloatField(null=True)
+    return_from_rmw      = FloatField(null=True)
+    return_from_cma      = FloatField(null=True)
+    return_from_gp       = FloatField(null=True)
+    n_quarters_gp         = IntegerField(null=True)   # quarters feeding the secondary GP-only regression
 
     class Meta:
         table_name = "fund_skill_result"
@@ -510,6 +533,16 @@ def init_db(path: Path | None = None) -> SqliteDatabase:
         "ALTER TABLE fund_skill_result ADD COLUMN beta_mom REAL",
         "ALTER TABLE fund_skill_result ADD COLUMN t_stat_mom REAL",
         "ALTER TABLE fund_skill_result ADD COLUMN return_from_mom REAL",
+        "ALTER TABLE fund_skill_result ADD COLUMN beta_rmw REAL",
+        "ALTER TABLE fund_skill_result ADD COLUMN t_stat_rmw REAL",
+        "ALTER TABLE fund_skill_result ADD COLUMN return_from_rmw REAL",
+        "ALTER TABLE fund_skill_result ADD COLUMN beta_cma REAL",
+        "ALTER TABLE fund_skill_result ADD COLUMN t_stat_cma REAL",
+        "ALTER TABLE fund_skill_result ADD COLUMN return_from_cma REAL",
+        "ALTER TABLE fund_skill_result ADD COLUMN beta_gp REAL",
+        "ALTER TABLE fund_skill_result ADD COLUMN t_stat_gp REAL",
+        "ALTER TABLE fund_skill_result ADD COLUMN return_from_gp REAL",
+        "ALTER TABLE fund_skill_result ADD COLUMN n_quarters_gp INTEGER",
     ):
         try:
             db.execute_sql(stmt)

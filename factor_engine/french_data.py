@@ -1,11 +1,25 @@
 """
-Official Fama-French-Carhart 4-factor data downloaded directly from Ken French's
-data library (3-factor file plus a separately-published momentum file, merged).
+Official Fama-French data downloaded directly from Ken French's data library —
+the 3-factor file, the separately-published momentum file, and the 5-factor
+file (which adds RMW and CMA), merged into progressively richer panels up to
+the full 7-factor model (Fama-French 5 + Carhart momentum + this platform's
+proprietary GP factor).
 
-We use the published US daily series (Mkt-RF, SMB, HML, Mom, RF) rather than the
-ETF-proxy series built in factor_engine/factors/.  The official series uses
-actual CRSP stock returns and proper B/M breakpoints — strictly more accurate
-than the IWM/IWB/IWD/IWF/IWN/IWO/MTUM proxies.
+We use the published US daily series (Mkt-RF, SMB, HML, RMW, CMA, Mom, RF)
+rather than the ETF-proxy series built in factor_engine/factors/.  The
+official series uses actual CRSP stock returns and proper B/M breakpoints —
+strictly more accurate than the IWM/IWB/IWD/IWF/IWN/IWO/MTUM proxies.
+
+GP (Gross Profitability) has no Ken French analog — it's a proprietary factor
+constructed in factor_engine/factors/gp.py from ~1500 stocks' financial
+statement data, with materially shorter history (~2021-present) than the
+Ken French series (full history to 1963).  get_ff7_daily() left-joins it onto
+the full ff6 panel so pre-2021 mkt/smb/hml/rmw/cma/mom history is never
+truncated — the gp column is simply NaN before GP's actual coverage starts.
+Callers that run a single joint regression across the full panel must dropna
+consistently, or use the two-tier approach documented in
+smart_money/factor_apply.py if they need the other six factors' full history
+preserved.
 
 VXUS methodology note
 ---------------------
@@ -16,12 +30,14 @@ Constructing one would require knowing VXUS's current geographic weights (≈37%
 Europe, 27% Pacific, 25% EM, 11% other), which vary over time and would introduce
 a time-varying factor matrix — complexity that buys little precision at daily
 frequency given that developed markets co-move with the US at r ≈ 0.70–0.85.  We
-therefore use the US FF4 factors for VXUS, label it "US FF4 (intl. approx.)"
-everywhere in output, and note the R² reduction (~0.60–0.75 vs. 0.95+ for domestic
-ETFs) so the user can calibrate their confidence.
+therefore use the US factor series for VXUS, label it accordingly (see
+factor_engine/portfolio.py's _factor_basis_label) everywhere in output, and note
+the R² reduction (~0.60–0.75 vs. 0.95+ for domestic ETFs) so the user can
+calibrate their confidence.
 
-Cache: data/french/us_ff3_daily.csv + us_mom_daily.csv (full history from 1926;
-immutable past data)
+Cache: data/french/us_ff3_daily.csv + us_mom_daily.csv + us_ff5_daily.csv
+(full history from 1926/1963; immutable past data). GP's own cache lives
+under data/gp/ — see factor_engine/factors/gp.py.
 Source: https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/data_library.html
 """
 
@@ -38,6 +54,8 @@ _US_FF3_ZIP = "F-F_Research_Data_Factors_daily_CSV.zip"
 _US_FF3_CACHE = os.path.join(_CACHE_DIR, "us_ff3_daily.csv")
 _US_MOM_ZIP = "F-F_Momentum_Factor_daily_CSV.zip"
 _US_MOM_CACHE = os.path.join(_CACHE_DIR, "us_mom_daily.csv")
+_US_FF5_ZIP = "F-F_Research_Data_5_Factors_2x3_daily_CSV.zip"
+_US_FF5_CACHE = os.path.join(_CACHE_DIR, "us_ff5_daily.csv")
 
 _FF3_COLUMN_MAP = {
     "Mkt-RF": "mkt_excess",
@@ -50,6 +68,15 @@ _MOM_COLUMN_MAP = {
     "Mom":   "mom",
     "MOM":   "mom",
     "WML":   "mom",  # some vintages of French's file label this column WML
+}
+_FF5_COLUMN_MAP = {
+    "Mkt-RF": "mkt_excess",
+    "MKT-RF": "mkt_excess",
+    "SMB":    "smb",
+    "HML":    "hml",
+    "RMW":    "rmw",
+    "CMA":    "cma",
+    "RF":     "rf",
 }
 
 
@@ -146,6 +173,26 @@ def _load_full_mom_history() -> pd.DataFrame:
     return df
 
 
+def _load_full_ff5_history() -> pd.DataFrame:
+    """
+    Return the full US daily 5-factor (Mkt-RF, SMB, HML, RMW, CMA, RF) history,
+    fetching and caching if needed.  Only the rmw/cma columns are actually
+    consumed by get_ff6_daily()/get_ff7_daily() below — mkt/smb/hml/rf come
+    from the 3-factor file (_load_full_history()) to keep a single source of
+    truth for those three, consistent with how get_ff4_daily() already only
+    takes 'mom' from the separately-published momentum file.
+    """
+    os.makedirs(_CACHE_DIR, exist_ok=True)
+    if os.path.exists(_US_FF5_CACHE):
+        df = pd.read_csv(_US_FF5_CACHE, index_col=0, parse_dates=True)
+        df.index.name = "date"
+        return df
+    raw = _download_zip(_US_FF5_ZIP)
+    df = _parse_french_csv(raw, _FF5_COLUMN_MAP)
+    df.to_csv(_US_FF5_CACHE)
+    return df
+
+
 def get_ff3_daily(start: str, end: str) -> pd.DataFrame:
     """
     Return official Fama-French US 3-factor data for the given date range.
@@ -193,4 +240,65 @@ def get_ff4_daily(start: str, end: str) -> pd.DataFrame:
     df = ff3.join(mom[["mom"]], how="inner")
     mask = (df.index >= pd.Timestamp(start)) & (df.index <= pd.Timestamp(end))
     cols = [c for c in ("mkt_excess", "smb", "hml", "mom", "rf") if c in df.columns]
+    return df.loc[mask, cols].copy()
+
+
+def _load_full_ff6_history() -> pd.DataFrame:
+    """Full-history join of ff3 + mom + (rmw, cma from the 5-factor file)."""
+    ff3 = _load_full_history()
+    mom = _load_full_mom_history()
+    ff5 = _load_full_ff5_history()
+    df = ff3.join(mom[["mom"]], how="inner").join(ff5[["rmw", "cma"]], how="inner")
+    return df
+
+
+def get_ff6_daily(start: str, end: str) -> pd.DataFrame:
+    """
+    Return the Fama-French 5-factor + Carhart momentum ("FF6") daily panel.
+
+    Columns
+    -------
+    mkt_excess, smb, hml, rmw, cma, mom, rf
+
+    rmw/cma come from Ken French's separately-published 5-factor file (see
+    _load_full_ff5_history()); mom comes from the separately-published
+    momentum file, exactly as in get_ff4_daily(). All are genuine academic
+    series with full history — no ETF proxies involved.
+    """
+    df = _load_full_ff6_history()
+    mask = (df.index >= pd.Timestamp(start)) & (df.index <= pd.Timestamp(end))
+    cols = [c for c in ("mkt_excess", "smb", "hml", "rmw", "cma", "mom", "rf") if c in df.columns]
+    return df.loc[mask, cols].copy()
+
+
+def get_ff7_daily(start: str, end: str) -> pd.DataFrame:
+    """
+    Return the full 7-factor panel: FF6 (see get_ff6_daily()) plus this
+    platform's proprietary GP (Gross Profitability) factor.
+
+    Columns
+    -------
+    mkt_excess, smb, hml, rmw, cma, mom, gp, rf
+
+    GP is left-joined onto the full FF6 history, so requesting a [start, end]
+    range that predates GP's own coverage (~2021-present, see
+    factor_engine/factors/gp.py) does NOT truncate the other six factors —
+    it simply returns NaN in the gp column for those dates. Callers running a
+    single joint regression across the full panel must dropna (which will
+    naturally restrict that regression to GP's covered window); callers that
+    need the other six factors' full history preserved should use
+    get_ff6_daily() for the primary fit and this function only for the
+    GP-covered subset — see smart_money/factor_apply.py's two-tier design.
+    """
+    from factor_engine.factors.gp import build_gp_factor
+
+    ff6 = _load_full_ff6_history()
+    # Wide net: GP's real coverage floor is unknown until the factor is built,
+    # so request from well before its plausible start through today, then
+    # let the left-join below place NaNs wherever GP has no data.
+    gp = build_gp_factor(start="2015-01-01", end=pd.Timestamp.today().date().isoformat())
+    df = ff6.join(gp[["gp"]] if not gp.empty else pd.DataFrame(columns=["gp"]), how="left")
+
+    mask = (df.index >= pd.Timestamp(start)) & (df.index <= pd.Timestamp(end))
+    cols = [c for c in ("mkt_excess", "smb", "hml", "rmw", "cma", "mom", "gp", "rf") if c in df.columns]
     return df.loc[mask, cols].copy()

@@ -15,7 +15,7 @@ Deep-dive panel (6 tabs)
 3. Valuation   — multiples, analyst consensus, short interest
 4. Financials  — revenue/margin charts, income table, FCF, balance sheet
 5. Earnings    — beat/miss bar chart, EPS history
-6. Factor      — FF4 profile vs portfolio (Module 1 engine)
+6. Factor      — 7-factor profile vs portfolio (Module 1 engine)
 """
 from __future__ import annotations
 
@@ -1109,15 +1109,18 @@ def _render_factor_tab(ticker: str) -> None:
         _interpret_beta_market,
         _interpret_beta_smb,
         _interpret_beta_hml,
+        _interpret_beta_rmw,
+        _interpret_beta_cma,
         _interpret_beta_mom,
+        _interpret_beta_gp,
     )
 
-    with st.spinner(f"Computing FF4 factor profile for {ticker}…"):
+    with st.spinner(f"Computing 7-factor profile for {ticker}…"):
         profile = ticker_ff3_profile(ticker)
 
     if profile is None:
         st.info(
-            f"FF4 factor profile not available for {ticker}. "
+            f"7-factor profile not available for {ticker}. "
             "This may be a new IPO, a delisted security, or a ticker with insufficient "
             "price history in the 2021–2024 analysis window.",
             icon=":material/info:",
@@ -1127,11 +1130,14 @@ def _render_factor_tab(ticker: str) -> None:
     bm  = profile["beta_market"]
     bsmb = profile["beta_smb"]
     bhml = profile["beta_hml"]
+    brmw = profile["beta_rmw"]
+    bcma = profile["beta_cma"]
     bmom = profile["beta_mom"]
+    bgp  = profile["beta_gp"]
     r2   = profile["r_squared"]
     alpha = profile["alpha_annualized"]
 
-    # --- Metrics grid ---
+    # --- Metrics grid — row 1: factor betas ---
     c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
     c1.metric(
         "Market β", f"{bm:+.3f}",
@@ -1160,6 +1166,24 @@ def _render_factor_tab(ticker: str) -> None:
         ),
     )
     c4.metric(
+        "RMW β", f"{brmw:+.3f}",
+        help=(
+            "Profitability Factor (Robust Minus Weak) measures exposure to operating "
+            "profitability. Positive values mean the stock behaves like high-profitability "
+            "businesses. Negative values mean it behaves like low-profitability businesses. "
+            "Ken French official series, full history."
+        ),
+    )
+    c5.metric(
+        "CMA β", f"{bcma:+.3f}",
+        help=(
+            "Investment Factor (Conservative Minus Aggressive) measures exposure to corporate "
+            "investment intensity. Positive values mean the stock behaves like conservative, "
+            "disciplined capital allocators. Negative values mean it behaves like aggressive "
+            "investors/acquirers. Ken French official series, full history."
+        ),
+    )
+    c6.metric(
         "Mom β", f"{bmom:+.3f}",
         help=(
             "Momentum Factor (Carhart UMD) measures exposure to recent price trend. Positive "
@@ -1168,25 +1192,39 @@ def _render_factor_tab(ticker: str) -> None:
             "momentum-neutral."
         ),
     )
-    c5.metric(
+    c7.metric(
+        "GP β", f"{bgp:+.3f}",
+        help=(
+            "Gross Profitability (2021-present) — this platform's proprietary factor, "
+            "(Revenue-COGS)/Assets, long high-margin businesses / short low-margin businesses. "
+            "Positive values mean the stock behaves like high-gross-margin businesses. "
+            "Chosen over FCF yield specifically so heavy reinvestors (e.g. AMZN, NVDA) aren't "
+            "penalized for capital intensity. Coverage is ~2021-present only — materially "
+            "shorter history than the other six factors, so treat this beta as directional."
+        ),
+    )
+
+    # --- Metrics grid — row 2: fit stats ---
+    d1, d2, d3 = st.columns(3)
+    d1.metric(
         "R²", f"{r2:.3f}",
         help=(
             "R-Squared measures how much of this stock's daily return variance is explained by "
-            "the four Fama-French-Carhart factors (market, size, value, momentum). Higher R² "
-            "means the stock is more factor-driven; lower means more stock-specific."
+            "the 7-factor model (market, size, value, profitability, investment, momentum, "
+            "gross profitability). Higher R² means the stock is more factor-driven; lower means "
+            "more stock-specific."
         ),
     )
-    c6.metric(
+    d2.metric(
         "Alpha (ann.)", f"{alpha * 100:+.2f}%",
         help=(
             "Annualized Alpha is the return unexplained by factor exposures — the stock's "
-            "performance above or below what its market, size, value, and momentum tilts would "
-            "predict. Positive alpha suggests historical outperformance versus its factor "
-            "benchmark; negative means underperformance. This is a historical measure, not a "
-            "prediction of future returns."
+            "performance above or below what its factor tilts would predict. Positive alpha "
+            "suggests historical outperformance versus its factor benchmark; negative means "
+            "underperformance. This is a historical measure, not a prediction of future returns."
         ),
     )
-    c7.metric(
+    d3.metric(
         "n_obs", str(profile["n_obs"]),
         help=(
             "Number of trading days used in the regression. More observations generally produce "
@@ -1197,7 +1235,8 @@ def _render_factor_tab(ticker: str) -> None:
 
     st.caption(
         f"{profile['start']} → {profile['end']} · "
-        f"Ken French US FF4 factors"
+        f"7-factor model: Ken French US market/SMB/HML/RMW/CMA/MOM + proprietary "
+        f"Gross Profitability (2021–present)"
     )
 
     # --- Plain-English interpretation ---
@@ -1205,9 +1244,13 @@ def _render_factor_tab(ticker: str) -> None:
     st.markdown(f"- **Market:** {_interpret_beta_market(bm)}")
     st.markdown(f"- **Size (SMB):** {_interpret_beta_smb(bsmb)}")
     st.markdown(f"- **Value/Growth (HML):** {_interpret_beta_hml(bhml)}")
+    st.markdown(f"- **Profitability (RMW):** {_interpret_beta_rmw(brmw)}")
+    st.markdown(f"- **Investment (CMA):** {_interpret_beta_cma(bcma)}")
     st.markdown(f"- **Momentum (MOM):** {_interpret_beta_mom(bmom)}")
+    st.markdown(f"- **Gross Profitability (GP, 2021–present):** {_interpret_beta_gp(bgp)}")
     st.markdown(
-        f"- **Model fit:** FF4 explains **{r2 * 100:.1f}%** of this stock's daily return variance. "
+        f"- **Model fit:** the 7-factor model explains **{r2 * 100:.1f}%** of this stock's daily "
+        f"return variance. "
         + ("High — most price movement is factor-driven." if r2 > 0.60
            else "Moderate — substantial idiosyncratic component." if r2 > 0.35
            else "Low — heavily idiosyncratic or sector-specific.")
@@ -1225,7 +1268,10 @@ def _render_factor_tab(ticker: str) -> None:
     pm   = port.get("beta_market", 0)
     psmb = port.get("beta_smb", 0)
     phml = port.get("beta_hml", 0)
+    prmw = port.get("beta_rmw", 0)
+    pcma = port.get("beta_cma", 0)
     pmom = port.get("beta_mom", 0)
+    pgp  = port.get("beta_gp", 0)
 
     alloc_pct = st.select_slider(
         "Allocation size",
@@ -1238,7 +1284,10 @@ def _render_factor_tab(ticker: str) -> None:
     new_m   = (1 - w) * pm   + w * bm
     new_smb = (1 - w) * psmb + w * bsmb
     new_hml = (1 - w) * phml + w * bhml
+    new_rmw = (1 - w) * prmw + w * brmw
+    new_cma = (1 - w) * pcma + w * bcma
     new_mom = (1 - w) * pmom + w * bmom
+    new_gp  = (1 - w) * pgp  + w * bgp
 
     def _delta_icon(delta: float) -> str:
         return ":green[↑]" if delta > 0.02 else ":red[↓]" if delta < -0.02 else ":gray[→]"
@@ -1267,14 +1316,39 @@ def _render_factor_tab(ticker: str) -> None:
             "":           _delta_icon(new_hml - phml),
         },
         {
+            "Factor":     "RMW β (profitability)",
+            "This Stock": f"{brmw:+.3f}",
+            "Portfolio":  f"{prmw:+.3f}",
+            impact_col:   f"{new_rmw:+.3f} ({new_rmw - prmw:+.3f})",
+            "":           _delta_icon(new_rmw - prmw),
+        },
+        {
+            "Factor":     "CMA β (investment)",
+            "This Stock": f"{bcma:+.3f}",
+            "Portfolio":  f"{pcma:+.3f}",
+            impact_col:   f"{new_cma:+.3f} ({new_cma - pcma:+.3f})",
+            "":           _delta_icon(new_cma - pcma),
+        },
+        {
             "Factor":     "MOM β (momentum)",
             "This Stock": f"{bmom:+.3f}",
             "Portfolio":  f"{pmom:+.3f}",
             impact_col:   f"{new_mom:+.3f} ({new_mom - pmom:+.3f})",
             "":           _delta_icon(new_mom - pmom),
         },
+        {
+            "Factor":     "GP β (Gross Profitability, 2021–present)",
+            "This Stock": f"{bgp:+.3f}",
+            "Portfolio":  f"{pgp:+.3f}",
+            impact_col:   f"{new_gp:+.3f} ({new_gp - pgp:+.3f})",
+            "":           _delta_icon(new_gp - pgp),
+        },
     ]
     st.dataframe(pd.DataFrame(comp_data), hide_index=True, width="stretch")
+    st.caption(
+        ":gray[GP (Gross Profitability) has ~2021-present coverage only — materially shorter "
+        "history than the other six factors. Treat its beta as directional.]"
+    )
 
     # Diversification / concentration verdict
     verdicts = []
@@ -1305,6 +1379,13 @@ def _render_factor_tab(ticker: str) -> None:
         verdicts.append("adds momentum exposure")
     else:
         verdicts.append("adds contrarian exposure")
+
+    if abs(bgp - pgp) < 0.10:
+        verdicts.append("gross-profitability-neutral")
+    elif bgp > pgp:
+        verdicts.append("adds gross-profitability exposure")
+    else:
+        verdicts.append("adds low-margin exposure")
 
     st.caption(f":material/balance: Adding {ticker} at {alloc_pct}%: " + " · ".join(verdicts) + ".")
     st.caption(

@@ -51,7 +51,7 @@ def test_mom_equals_momentum_minus_benchmark(mock_lr):
 def test_positive_mom_for_winner_stock(mock_lr):
     """A stock tracking the momentum ETF leg exactly should have β_mom > 0."""
     n = 500
-    mf, sf, hf, mmf, rf = _synthetic_factors(n=n)
+    mf, sf, hf, mmf, gpf, rf = _synthetic_factors(n=n)
     stock = pd.Series(
         mmf["momentum_return"].values + rf.values,
         index=_make_dates(n),
@@ -61,7 +61,7 @@ def test_positive_mom_for_winner_stock(mock_lr):
 
     result = compute_factor_loadings(
         "WINCO", "2020-01-01", "2022-12-31",
-        market_factor=mf, smb_factor=sf, hml_factor=hf, mom_factor=mmf,
+        market_factor=mf, smb_factor=sf, hml_factor=hf, mom_factor=mmf, gp_factor=gpf,
     )
     assert result["beta_mom"] > 0, f"Expected β_mom > 0 for winner stock, got {result['beta_mom']}"
 
@@ -70,7 +70,7 @@ def test_positive_mom_for_winner_stock(mock_lr):
 def test_negative_mom_for_loser_stock(mock_lr):
     """A stock tracking the benchmark leg exactly (avoiding recent winners) should have β_mom < 0."""
     n = 500
-    mf, sf, hf, mmf, rf = _synthetic_factors(n=n)
+    mf, sf, hf, mmf, gpf, rf = _synthetic_factors(n=n)
     stock = pd.Series(
         mmf["benchmark_return"].values + rf.values,
         index=_make_dates(n),
@@ -80,6 +80,6 @@ def test_negative_mom_for_loser_stock(mock_lr):
 
     result = compute_factor_loadings(
         "LOSECO", "2020-01-01", "2022-12-31",
-        market_factor=mf, smb_factor=sf, hml_factor=hf, mom_factor=mmf,
+        market_factor=mf, smb_factor=sf, hml_factor=hf, mom_factor=mmf, gp_factor=gpf,
     )
     assert result["beta_mom"] < 0, f"Expected β_mom < 0 for loser stock, got {result['beta_mom']}"

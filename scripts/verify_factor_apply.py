@@ -1,14 +1,23 @@
 """
-Verification: FF4 skill decomposition (factor_apply.py) for Module 3.
+Verification: 7-factor two-tier skill decomposition (factor_apply.py) for Module 3.
 
-Two checks are run in sequence:
+Three checks are run in sequence:
 
-Check 1 — Synthetic regression math
+Check 1 — Synthetic regression math (primary tier)
     Constructs synthetic quarterly fund returns from known alpha/beta parameters
-    using actual FF4 quarterly factors (2020Q1–2024Q4, 20 quarters).  The fund
-    returns are deterministic (no noise), so OLS must recover the exact input
-    parameters.  Confirms: factor aggregation, excess-return construction, regression
-    setup, and decomposition identity.
+    using actual 7-factor quarterly data (2020Q1–2024Q4, 20 quarters), using only
+    the primary tier's six factors (mkt/smb/hml/rmw/cma/mom — no gp term, since
+    this window mostly predates GP's coverage). The fund returns are deterministic
+    (no noise), so OLS must recover the exact input parameters. Confirms: factor
+    aggregation, excess-return construction, regression setup, and decomposition
+    identity.
+
+Check 1b — Synthetic regression math (secondary GP tier)
+    Same idea, restricted to a window inside GP's own coverage (~2021-present) and
+    including a gp term, verifying the secondary 7-factor fit recovers beta_gp
+    exactly and n_quarters_gp matches the window length. Requires GP's factor to
+    already be built (or triggers the full ~1500-ticker fetch on first run — see
+    factor_engine/factors/gp.py).
 
 Check 2 — Viking EDGAR pipeline
     Fetches the 12 most recent canonical Viking 13F filings from EDGAR, seeds the
@@ -29,11 +38,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import pandas as pd
 import yfinance as yf
 
-from factor_engine.french_data import get_ff4_daily
+from factor_engine.factors.gp import get_gp_coverage_start
+from factor_engine.french_data import get_ff7_daily
 from smart_money import edgar
 from smart_money.factor_apply import (
+    MIN_QUARTERS_GP,
     MIN_QUARTERS_REG,
     MIN_QUARTERS_RELIABLE,
     _aggregate_quarter_factors,
@@ -105,29 +117,37 @@ TRUE_ALPHA    = 0.010   # 1.0% quarterly = 4.0% annualised
 TRUE_BETA_MKT = 0.85
 TRUE_BETA_SMB = -0.30
 TRUE_BETA_HML =  0.10
+TRUE_BETA_RMW =  0.20
+TRUE_BETA_CMA = -0.15
 TRUE_BETA_MOM =  0.15
+TRUE_BETA_GP  =  0.25
 
 
 def _build_synthetic_quarters() -> list[FundQuarterReturn]:
     """
-    Build 20 deterministic synthetic quarterly returns using actual FF4 factors.
+    Build 20 deterministic synthetic quarterly returns using actual 7-factor data.
 
     R_fund = RF_q + TRUE_ALPHA + TRUE_BETA_MKT * MktExcess_q
                   + TRUE_BETA_SMB * SMB_q + TRUE_BETA_HML * HML_q
+                  + TRUE_BETA_RMW * RMW_q + TRUE_BETA_CMA * CMA_q
                   + TRUE_BETA_MOM * MOM_q
+
+    Deliberately excludes a gp term — this window (2019Q4-2024Q4) mostly predates
+    GP's ~2021-present coverage, and this check exercises the PRIMARY tier (six
+    Ken-French factors, full fund history), which never sees gp as a regressor.
+    See _build_gp_covered_synthetic_quarters() below for the secondary-tier check.
 
     No noise — OLS must recover parameters exactly (within floating-point).
     """
-    ff4 = get_ff4_daily(
+    ff7 = get_ff7_daily(
         _QUARTER_ENDS[0].isoformat(),
         _QUARTER_ENDS[-1].isoformat(),
     )
-    import pandas as pd
     quarters: list[FundQuarterReturn] = []
     for i in range(1, len(_QUARTER_ENDS)):
         boq = _QUARTER_ENDS[i - 1]
         eoq = _QUARTER_ENDS[i]
-        fq  = _aggregate_quarter_factors(ff4, boq.isoformat(), eoq.isoformat())
+        fq  = _aggregate_quarter_factors(ff7, boq.isoformat(), eoq.isoformat())
         if fq is None:
             continue
         r_fund = (
@@ -136,6 +156,8 @@ def _build_synthetic_quarters() -> list[FundQuarterReturn]:
             + TRUE_BETA_MKT * fq["mkt_excess"]
             + TRUE_BETA_SMB * fq["smb"]
             + TRUE_BETA_HML * fq["hml"]
+            + TRUE_BETA_RMW * fq["rmw"]
+            + TRUE_BETA_CMA * fq["cma"]
             + TRUE_BETA_MOM * fq["mom"]
         )
         label = f"{eoq.year}Q{(eoq.month - 1) // 3 + 1}"
@@ -154,13 +176,66 @@ def _build_synthetic_quarters() -> list[FundQuarterReturn]:
     return quarters
 
 
+def _build_gp_covered_synthetic_quarters() -> "list[FundQuarterReturn] | None":
+    """
+    Build deterministic synthetic quarterly returns entirely within GP's own
+    coverage window, including a gp term — exercises the SECONDARY tier.
+
+    Returns None if GP's built coverage is too short to yield MIN_QUARTERS_GP
+    quarters (e.g. very first run before enough history has accumulated).
+    """
+    coverage_start = get_gp_coverage_start()
+    if coverage_start is None:
+        return None
+
+    quarter_ends = [d for d in _QUARTER_ENDS if pd.Timestamp(d) > coverage_start + pd.Timedelta(days=95)]
+    if len(quarter_ends) < MIN_QUARTERS_GP + 1:
+        return None
+
+    ff7 = get_ff7_daily(quarter_ends[0].isoformat(), quarter_ends[-1].isoformat())
+    quarters: list[FundQuarterReturn] = []
+    for i in range(1, len(quarter_ends)):
+        boq = quarter_ends[i - 1]
+        eoq = quarter_ends[i]
+        fq  = _aggregate_quarter_factors(ff7, boq.isoformat(), eoq.isoformat())
+        if fq is None or fq["gp"] is None:
+            continue
+        r_fund = (
+            fq["rf"]
+            + TRUE_ALPHA
+            + TRUE_BETA_MKT * fq["mkt_excess"]
+            + TRUE_BETA_SMB * fq["smb"]
+            + TRUE_BETA_HML * fq["hml"]
+            + TRUE_BETA_RMW * fq["rmw"]
+            + TRUE_BETA_CMA * fq["cma"]
+            + TRUE_BETA_MOM * fq["mom"]
+            + TRUE_BETA_GP  * fq["gp"]
+        )
+        label = f"{eoq.year}Q{(eoq.month - 1) // 3 + 1}"
+        quarters.append(FundQuarterReturn(
+            fund_cik              = "SYNTHETIC_GP",
+            fund_name             = "Synthetic GP-Covered Fund",
+            quarter               = label,
+            period_start          = boq.isoformat(),
+            period_end            = eoq.isoformat(),
+            reconstructed_return  = r_fund,
+            coverage_pct          = 1.0,
+            n_holdings_total      = 50,
+            n_holdings_with_price = 50,
+            is_valid              = True,
+        ))
+    return quarters if len(quarters) >= MIN_QUARTERS_GP else None
+
+
 def run_check_1() -> None:
     _sep("=")
     print("Check 1 — Synthetic regression math")
     _sep("=")
     print(f"\n  True parameters:  alpha={TRUE_ALPHA:.3f}/qtr  β_mkt={TRUE_BETA_MKT:.2f}"
-          f"  β_smb={TRUE_BETA_SMB:.2f}  β_hml={TRUE_BETA_HML:.2f}  β_mom={TRUE_BETA_MOM:.2f}")
-    print(f"  Method: deterministic (no noise) — OLS must recover exact values\n")
+          f"  β_smb={TRUE_BETA_SMB:.2f}  β_hml={TRUE_BETA_HML:.2f}")
+    print(f"                     β_rmw={TRUE_BETA_RMW:.2f}  β_cma={TRUE_BETA_CMA:.2f}  β_mom={TRUE_BETA_MOM:.2f}")
+    print(f"  Method: deterministic (no noise), primary tier (no gp term) — "
+          f"OLS must recover exact values\n")
 
     quarters = _build_synthetic_quarters()
     print(f"  Quarters built: {len(quarters)}  "
@@ -179,6 +254,8 @@ def run_check_1() -> None:
         ("beta_market",      score["beta_market"],      TRUE_BETA_MKT),
         ("beta_smb",         score["beta_smb"],         TRUE_BETA_SMB),
         ("beta_hml",         score["beta_hml"],         TRUE_BETA_HML),
+        ("beta_rmw",         score["beta_rmw"],         TRUE_BETA_RMW),
+        ("beta_cma",         score["beta_cma"],         TRUE_BETA_CMA),
         ("beta_mom",         score["beta_mom"],         TRUE_BETA_MOM),
     ]
 
@@ -194,23 +271,31 @@ def run_check_1() -> None:
         print(f"  {name:<20} {recovered:>10.7f}  {true_val:>8.4f}  {err:>10.2e}  {mark}")
     _sep()
 
-    # Decomposition identity: five components must sum to avg_excess_return_q.
+    # Decomposition identity: seven components must sum to avg_excess_return_q
+    # (primary tier — gp is deliberately excluded, see module docstring).
     decomp_sum = (
         score["alpha_quarterly"]
         + score["return_from_market"]
         + score["return_from_smb"]
         + score["return_from_hml"]
+        + score["return_from_rmw"]
+        + score["return_from_cma"]
         + score["return_from_mom"]
     )
+    # Each of the 7 summed components is independently rounded to 6dp, so up
+    # to 7 x 5e-7 = 3.5e-6 accumulated rounding error is expected even in the
+    # noiseless case — this is not the same TOL used for per-parameter
+    # recovery above (which correctly demands exact float equality).
+    DECOMP_TOL = 1e-5
     decomp_err = abs(decomp_sum - score["avg_excess_return_q"])
-    decomp_ok  = decomp_err < TOL
+    decomp_ok  = decomp_err < DECOMP_TOL
     if not decomp_ok:
         all_ok = False
     mark = "✓" if decomp_ok else "✗ FAIL"
     print(f"\n  Decomposition identity check:")
-    print(f"    alpha + mkt + smb + hml + mom = {decomp_sum:.8f}")
-    print(f"    avg_excess_return_q           = {score['avg_excess_return_q']:.8f}")
-    print(f"    |error|                       = {decomp_err:.2e}   {mark}\n")
+    print(f"    alpha + mkt + smb + hml + rmw + cma + mom = {decomp_sum:.8f}")
+    print(f"    avg_excess_return_q                       = {score['avg_excess_return_q']:.8f}")
+    print(f"    |error|                                   = {decomp_err:.2e}   {mark}  (tol {DECOMP_TOL:.0e})\n")
 
     print(f"  R² = {score['r_squared']:.6f}  (expected 1.000000 with no noise)")
     print(f"  n_quarters = {score['n_quarters']}\n")
@@ -219,6 +304,54 @@ def run_check_1() -> None:
         print("  FAILED — regression math has a bug. Stop.")
         sys.exit(1)
     print("  Check 1 PASSED ✓\n")
+
+
+def run_check_1b() -> None:
+    _sep("=")
+    print("Check 1b — Synthetic regression math (secondary GP tier)")
+    _sep("=")
+    print(f"\n  True parameters:  alpha={TRUE_ALPHA:.3f}/qtr  β_mkt={TRUE_BETA_MKT:.2f}"
+          f"  β_smb={TRUE_BETA_SMB:.2f}  β_hml={TRUE_BETA_HML:.2f}")
+    print(f"                     β_rmw={TRUE_BETA_RMW:.2f}  β_cma={TRUE_BETA_CMA:.2f}"
+          f"  β_mom={TRUE_BETA_MOM:.2f}  β_gp={TRUE_BETA_GP:.2f}")
+    print(f"  Method: deterministic (no noise), restricted to GP's coverage window\n")
+
+    quarters = _build_gp_covered_synthetic_quarters()
+    if quarters is None:
+        print("  SKIPPED — GP factor not yet built, or insufficient coverage history")
+        print(f"  to assemble >= MIN_QUARTERS_GP ({MIN_QUARTERS_GP}) quarters yet.")
+        print("  Run scripts/run_gp_sanity.py first to build the GP factor, or wait")
+        print("  for more history to accumulate (~2021-present coverage window).\n")
+        return
+
+    print(f"  Quarters built: {len(quarters)}  "
+          f"({quarters[0]['quarter']} → {quarters[-1]['quarter']})\n")
+
+    score = score_from_returns("SYNTHETIC_GP", "Synthetic GP-Covered Fund", quarters,
+                                min_quarters=MIN_QUARTERS_GP)
+    if score is None:
+        print("  ERROR: score_from_returns returned None — unexpected.")
+        sys.exit(1)
+    if score["beta_gp"] is None:
+        print(f"  ERROR: beta_gp is None despite n_quarters_gp={score['n_quarters_gp']} "
+              f">= MIN_QUARTERS_GP={MIN_QUARTERS_GP} — unexpected.")
+        sys.exit(1)
+
+    TOL = 1e-6   # looser than Check 1 — secondary tier has fewer observations
+    err = abs(score["beta_gp"] - TRUE_BETA_GP)
+    passed = err < TOL
+    mark = "✓" if passed else "✗ FAIL"
+    print(f"  {'Parameter':<20} {'Recovered':>10}  {'True':>8}  {'|Error|':>10}  {'Pass?'}")
+    _sep()
+    print(f"  {'beta_gp':<20} {score['beta_gp']:>10.7f}  {TRUE_BETA_GP:>8.4f}  {err:>10.2e}  {mark}")
+    _sep()
+    print(f"\n  n_quarters_gp = {score['n_quarters_gp']}  (>= MIN_QUARTERS_GP={MIN_QUARTERS_GP})")
+    print(f"  t_stat_gp     = {score['t_stat_gp']:+.3f}\n")
+
+    if not passed:
+        print("  FAILED — secondary GP-tier regression math has a bug. Stop.")
+        sys.exit(1)
+    print("  Check 1b PASSED ✓\n")
 
 
 # ---------------------------------------------------------------------------
@@ -430,15 +563,24 @@ def run_check_2() -> None:
     print(f"  β_market   : {score['beta_market']:+.4f}  (t = {score['t_stat_market']:+.3f})")
     print(f"  β_smb      : {score['beta_smb']:+.4f}  (t = {score['t_stat_smb']:+.3f})")
     print(f"  β_hml      : {score['beta_hml']:+.4f}  (t = {score['t_stat_hml']:+.3f})")
+    print(f"  β_rmw      : {score['beta_rmw']:+.4f}  (t = {score['t_stat_rmw']:+.3f})")
+    print(f"  β_cma      : {score['beta_cma']:+.4f}  (t = {score['t_stat_cma']:+.3f})")
     print(f"  β_mom      : {score['beta_mom']:+.4f}  (t = {score['t_stat_mom']:+.3f})")
-    print(f"  R²         : {score['r_squared']:.4f}")
+    if score["beta_gp"] is not None:
+        print(f"  β_gp       : {score['beta_gp']:+.4f}  (t = {score['t_stat_gp']:+.3f})  "
+              f"[secondary tier, n_quarters_gp={score['n_quarters_gp']}]")
+    else:
+        print(f"  β_gp       : N/A  (n_quarters_gp={score['n_quarters_gp']} < MIN_QUARTERS_GP)")
+    print(f"  R²         : {score['r_squared']:.4f}  (primary tier)")
     print()
-    print("  Historical attribution (avg quarterly excess return over sample):")
+    print("  Historical attribution (avg quarterly excess return over sample, primary tier):")
     print(f"  {'Component':<28} {'Quarterly':>10}")
     _sep()
     print(f"  {'From market beta':<28} {_pct(score['return_from_market']):>10}")
     print(f"  {'From size factor (SMB)':<28} {_pct(score['return_from_smb']):>10}")
     print(f"  {'From value factor (HML)':<28} {_pct(score['return_from_hml']):>10}")
+    print(f"  {'From profitability (RMW)':<28} {_pct(score['return_from_rmw']):>10}")
+    print(f"  {'From investment (CMA)':<28} {_pct(score['return_from_cma']):>10}")
     print(f"  {'From momentum factor (MOM)':<28} {_pct(score['return_from_mom']):>10}")
     print(f"  {'Alpha (skill)':<28} {_pct(score['alpha_quarterly']):>10}")
     _sep()
@@ -446,6 +588,8 @@ def run_check_2() -> None:
         score["return_from_market"]
         + score["return_from_smb"]
         + score["return_from_hml"]
+        + score["return_from_rmw"]
+        + score["return_from_cma"]
         + score["return_from_mom"]
         + score["alpha_quarterly"]
     )
@@ -481,6 +625,7 @@ def run_check_2() -> None:
 
 def main() -> None:
     run_check_1()
+    run_check_1b()
     run_check_2()
     _sep("=")
     print("All checks passed.")

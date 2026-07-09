@@ -239,7 +239,10 @@ def main() -> None:
         beta_market  = h["beta_market"],
         beta_smb     = h["beta_smb"],
         beta_hml     = h["beta_hml"],
+        beta_rmw     = h["beta_rmw"],
+        beta_cma     = h["beta_cma"],
         beta_mom     = h["beta_mom"],
+        beta_gp      = h["beta_gp"],
         alpha_daily  = h["alpha_daily"],
     )
     print_stress_tests(stress_results)

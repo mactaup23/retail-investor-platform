@@ -46,8 +46,9 @@ side before executing.
 st.subheader("Module 1 — factor model construction")
 
 st.markdown("""
-The factor model is a self-constructed Fama-French-Carhart 4-factor (FF4) model built
-from freely available ETF proxies. The four factors are:
+The factor model is a self-constructed 5-factor model (Fama-French-Carhart 4-factor
+plus a proprietary Gross Profitability factor) built from freely available ETF proxies
+and, for GP, ~1500 stocks' financial statement data. The five factors are:
 
 **Market factor (Mkt−Rf)**
 The excess return of the broad equity market over the risk-free rate. Proxy: SPY daily
@@ -78,6 +79,19 @@ analysis and fund skill scoring (Module 3) instead use Ken
 French's official daily momentum series, which has full history and is the genuine
 academic factor rather than a proxy.
 
+**Gross Profitability factor (GP — proprietary, Novy-Marx 2013)**
+GP_ratio = (Revenue − COGS) / Total Assets, long top quintile / short bottom quintile,
+constructed from ~1500 US stocks (S&P Composite 1500 proxy — see the FF4→FF7 upgrade
+note below), quarterly-rebalanced with a 90-day reporting lag. GP was chosen over FCF
+yield specifically because FCF yield systematically penalizes growth-stage companies
+that reinvest heavily — high capex and working-capital investment suppress free cash
+flow even when the underlying unit economics are excellent. Gross profitability sits
+above the investment decision on the income statement, so it captures production-level
+economic quality without conflating it with a company's capital allocation stage. This
+matters directly for skill scoring: a fund holding aggressive reinvesting growth names
+(e.g. AMZN, NVDA) isn't penalized on a "quality" dimension for capital intensity that
+FCF yield would flag as weak.
+
 **Why build from scratch instead of using the Ken French data library directly?**
 For the smart-money fund skill scoring (Module 3), we need quarterly factor returns
 aligned exactly with each fund's quarterly reporting period. The Ken French library
@@ -93,13 +107,40 @@ the residual, inflating measured alpha. Under FF4 it is captured by an explicit 
 instead, giving a cleaner separation of stock-picking skill from factor beta — the
 platform's stated thesis for Module 3/4.
 
+**FF4 → FF7: the platform's current factor roster**
+The full model now spans 7 factors: market, size (SMB), value (HML), profitability
+(RMW), investment (CMA), momentum (MOM), and gross profitability (GP). RMW and CMA come
+directly from Ken French's published 5-factor daily series (genuine academic data, full
+history to 1963) — there's no clean single-ETF proxy for either the way IWD/IWF works
+for value, so unlike momentum, RMW/CMA are **not** duplicated as ETF proxies here. GP is
+the platform's own proprietary construction (no Ken French analog exists for it) and is
+used specifically on the ETF-proxy individual-holding path alongside market/SMB/HML/MOM.
+Portfolio-level analysis, fund skill scoring, and stress testing (which already use Ken
+French data for market/SMB/HML/MOM) additionally pick up RMW and CMA from that same
+source, plus GP joined in as a separate series — see the fund skill scoring section
+below for how GP's shorter history is handled there.
+
+**GP's history is short — by design, not a bug**
+Ken French's RMW/CMA/MOM series have full history (1963/1927). GP does not: it's built
+from yfinance's free fundamentals endpoint, which exposes at most ~5 years of annual
+statements and ~5 quarters of quarterly statements per company — a hard limitation of
+the free data source. GP's coverage is therefore bounded to roughly **2021–present**.
+Wherever GP appears in this platform, treat it as **"Gross Profitability (2021-present)"**
+— a directionally useful but less statistically established factor than the other six,
+which all have multi-decade history. This is reflected in how fund skill scoring
+combines GP with the other factors (see Module 3 below) and in how the historical stress
+tests apply it (GP's contribution is omitted, not silently zeroed, for any scenario
+predating its coverage — see the stress test section).
+
 **Regression specification**
 For a return series *r* and risk-free rate *Rf*:
 
-> excess_return = α + β_mkt × (Mkt − Rf) + β_smb × SMB + β_hml × HML + β_mom × MOM + ε
+> excess_return = α + β_mkt × (Mkt − Rf) + β_smb × SMB + β_hml × HML + β_mom × MOM + β_gp × GP + ε
 
 Estimated via OLS. The intercept α is Jensen's alpha — the average daily excess return
-after accounting for factor exposures. Alpha is annualised as α × 252.
+after accounting for factor exposures. Alpha is annualised as α × 252. (Portfolio-level
+and fund-skill regressions substitute β_rmw × RMW + β_cma × CMA into this specification
+in place of — or alongside — β_gp × GP, per the FF4→FF7 note above.)
 """)
 
 # ---------------------------------------------------------------------------
@@ -125,29 +166,39 @@ rebalancing):
 **Two-tier analysis**
 Tier 1 produces a single headline set of betas by constructing the daily portfolio return
 as a weighted sum of individual holding log returns, then regressing the combined series
-against the FF4 factors. This captures diversification effects (cross-holding
-correlations).
+against the full 7-factor panel (market, SMB, HML, RMW, CMA, MOM, GP). This captures
+diversification effects (cross-holding correlations).
 
-Tier 2 runs FF4 independently on each holding and computes the weighted beta contribution
-(weight × beta) for each. The sum of weighted betas approximates — but won't exactly
-match — the Tier 1 betas, because independent regressions use the same factor matrix but
-different residual structures.
+Tier 2 runs the same 7-factor regression independently on each holding and computes the
+weighted beta contribution (weight × beta) for each. The sum of weighted betas
+approximates — but won't exactly match — the Tier 1 betas, because independent
+regressions use the same factor matrix but different residual structures.
+
+Because GP's own coverage only starts ~2021 (see the FF4→FF7 note above) while the
+portfolio's default analysis window already begins 2021-01-04, this doesn't require any
+special handling here — GP simply sits inside the existing window rather than truncating
+it, unlike fund skill scoring (Module 3 below), where 13F history commonly predates 2021
+by many years.
 
 **VXUS treatment**
 VXUS is an international ETF. Strictly, it should be regressed against international
 Fama-French factors (Global FF3 from the Ken French library, which does not publish a
-momentum leg). The platform uses US FF4 as an approximation and labels it explicitly in
-the attribution table. The beta estimates are directionally useful but carry additional
-noise.
+momentum leg, let alone RMW/CMA/GP). The platform uses the US 7-factor panel as an
+approximation and labels it explicitly ("US FF7 (intl. approx.)") in the attribution
+table. The beta estimates are directionally useful but carry additional noise.
 
 **Stress tests**
-The stress tests apply the portfolio's current FF4 betas to actual factor returns that
-occurred during three historical episodes, including momentum — sourced from Ken French's
-official daily series so pre-2013 scenarios (e.g. the 2008 financial crisis) are still
-covered despite the MTUM ETF proxy not existing that far back. The daily estimated return
-is:
+The stress tests apply the portfolio's current 7-factor betas to actual factor returns
+that occurred during three historical episodes — sourced from Ken French's official
+daily series for market/SMB/HML/RMW/CMA/MOM, so pre-2013 scenarios (e.g. the 2008
+financial crisis) are fully covered despite the MTUM ETF proxy not existing that far
+back. GP is the exception: its own ~2021-present coverage structurally cannot reach the
+2008 or 2020 scenarios, and even 2022 is marginal. Rather than silently treating GP's
+missing exposure as zero, each scenario's GP contribution is computed only when GP has
+data for every trading day in that window — otherwise it's flagged unavailable and
+omitted from that scenario's estimate. The daily estimated return is:
 
-> r̂ₜ = Rfₜ + α_daily + β_mkt × Mkt_excessₜ + β_smb × SMBₜ + β_hml × HMLₜ + β_mom × MOMₜ
+> r̂ₜ = Rfₜ + α_daily + β_mkt × Mkt_excessₜ + β_smb × SMBₜ + β_hml × HMLₜ + β_rmw × RMWₜ + β_cma × CMAₜ + β_mom × MOMₜ [+ β_gp × GPₜ, when available]
 
 Period return: R = exp(Σ r̂ₜ) − 1
 
@@ -194,20 +245,37 @@ For each fund, quarterly portfolio returns are reconstructed using the Grinblatt
 (which is the quarter *end*), assume those positions were held at the start of the quarter,
 and compute their buy-and-hold return over the quarter using prices at both ends.
 
-A fund's quarterly excess return series is then regressed against the FF4 factors to
-decompose its returns:
+A fund's quarterly excess return series is then regressed in **two tiers**, because GP's
+~2021-present coverage (see the FF4→FF7 note in Module 1) is materially shorter than a
+typical fund's 13F history, which often extends back to 2013:
 
-> r_fund_q − Rf_q = α_q + β_mkt × Mkt_q + β_smb × SMB_q + β_hml × HML_q + β_mom × MOM_q + ε_q
+*Primary tier* — market, SMB, HML, RMW, CMA, MOM, run over the fund's **full** available
+quarterly history (unchanged sample depth vs. the prior FF4 spec):
+
+> r_fund_q − Rf_q = α_q + β_mkt × Mkt_q + β_smb × SMB_q + β_hml × HML_q + β_rmw × RMW_q + β_cma × CMA_q + β_mom × MOM_q + ε_q
+
+*Secondary tier* — the same six factors plus GP, run **only** over the subset of quarters
+that fall inside GP's coverage window. Only β_gp and its t-statistic are taken from this
+fit; its alpha and other six betas are discarded in favor of the primary tier's full-sample
+estimates. A fund needs at least 9 quarters inside GP's coverage window for β_gp to be
+computed at all — otherwise it's shown as unavailable, not defaulted to zero.
 
 Momentum matters most for growth/momentum-tilted managers: a fund that structurally holds
-recent winners will show inflated alpha under a 3-factor model, because that return
-component has nowhere to go but the residual. FF4 captures it as an explicit β_mom
-instead — a cleaner separation of stock-picking skill from factor beta.
+recent winners will show inflated alpha under a model missing that factor, because that
+return component has nowhere to go but the residual. The same logic extends to RMW/CMA
+for funds with strong profitability or capital-discipline tilts. Explicit betas give a
+cleaner separation of stock-picking skill from factor beta.
 
 The intercept α is the quarterly alpha — the return attributable to stock selection after
 removing factor beta. It is annualised as (1 + α_q)⁴ − 1 for display.
 
-Skill thresholds:
+**β_gp is inherently less reliable than the other six betas** — it's estimated over a
+much shorter window (a few years vs. potentially a decade-plus for the primary tier), so
+treat it as a directional read on recent positioning, not a robust historical estimate.
+Always display it labeled "Gross Profitability (2021-present)" alongside however many
+quarters actually fed it.
+
+Skill thresholds (primary tier):
 - **Reliable** (≥12 quarters): sufficient history for OLS to be meaningful
 - **Scored** (≥8 quarters): enough data to estimate but wide confidence intervals
 - α is a **directional signal, not a significance test**. The t-statistic and
@@ -366,6 +434,12 @@ historical sample and reflect the specific universe, weighting scheme, and time 
 tested. They do not account for transaction costs, slippage, or taxes, and a signal that
 was significant historically can degrade or fail going forward as market conditions,
 factor crowding, or fund behavior change.
+
+**Note:** the numbers above were computed against the FF4 fund skill model. The skill
+regression has since been extended to a 7-factor model (adding RMW, CMA, and a
+proprietary Gross Profitability factor — see Module 1 and Module 3 above); these IC
+figures have not yet been recomputed against that upgrade and will be refreshed in a
+future backtest run.
 """)
 
 # ---------------------------------------------------------------------------
@@ -443,7 +517,8 @@ st.markdown("""
 | Source | What it provides | Latency |
 |--------|-----------------|---------|
 | SEC EDGAR | 13F-HR quarterly filings | 45 days after quarter end |
-| Ken French Data Library | US FF4 daily factors for portfolio analysis | Monthly updates |
+| Ken French Data Library | US FF6 (5-factor + momentum) daily factors for portfolio/skill analysis | Monthly updates |
+| yfinance fundamentals | Financial statements for the proprietary GP factor (~1500 stocks) | ~2021-present only |
 | yfinance | Adjusted daily closing prices | Daily (T+0) |
 | OpenFIGI API | CUSIP → ticker resolution | Near real-time |
 | Anthropic Batch API | NLP scoring of 10-Q / 10-K MD&A | Computed at pipeline run |
@@ -464,16 +539,27 @@ report thousands of positions spanning foreign-listed stocks, delisted securitie
 obscure instruments that yfinance cannot price. Their 13F-derived return reconstructions
 are unreliable regardless of pipeline parameters.
 
-*ETF proxy factors vs pure factor sorts.* The self-constructed FF4 factors (IWM−IWB for
-SMB, four-ETF blend for HML) correlate 0.80–0.90 with the academic factor sorts but are
-not identical. The ETF proxies include transaction costs and tracking error that the
-academic sorts do not. The effect on beta estimates is small (within 0.05 for most
+*ETF proxy factors vs pure factor sorts.* The self-constructed market/SMB/HML/MOM factors
+(IWM−IWB for SMB, four-ETF blend for HML) correlate 0.80–0.90 with the academic factor
+sorts but are not identical. The ETF proxies include transaction costs and tracking error
+that the academic sorts do not. The effect on beta estimates is small (within 0.05 for most
 holdings) but real. The momentum proxy (MTUM−IWB) is the exception — correlation with
 the academic Carhart UMD factor is meaningfully lower (measured +0.71 over 2020-2024)
 because it is long-only-minus-benchmark rather than a true long-short winners-minus-losers
 spread (no liquid "loser" ETF exists to short). This proxy is used only for individual-holding
 factor profiles; portfolio-level analysis, stress tests, and fund skill scoring all use
 Ken French's official daily momentum series instead.
+
+*GP factor has ~2021-present coverage only.* Unlike the other six factors (full history to
+1927/1963 via Ken French, or 2013 for the MTUM momentum proxy), the proprietary Gross
+Profitability factor is built from yfinance's free fundamentals endpoint, which exposes at
+most ~5 years of annual and ~5 quarters of quarterly financial statements per company — a
+hard limitation of the data source, not a bug. β_gp estimates should be treated as
+directional and recency-focused, not robust multi-decade estimates. Wherever this platform
+shows GP, it's labeled "Gross Profitability (2021-present)." Fund skill scoring handles
+this via a two-tier regression (see Module 3) rather than truncating a fund's full history
+down to GP's shorter window; historical stress tests omit GP's contribution entirely for
+scenarios (2008, 2020) that predate its coverage rather than treating it as zero exposure.
 
 *Skill scores require 12+ quarters to be reliable.* Below 12 quarters, the OLS alpha
 estimate has wide confidence intervals. Alpha t-statistics and confidence labels are always
