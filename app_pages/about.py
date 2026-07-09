@@ -323,36 +323,43 @@ noise no signal can explain.
 **Why the t-statistic matters:** IC alone doesn't tell you whether the result is real or
 just noise from a limited sample. The t-statistic answers "how many standard errors is
 this IC away from zero?" A t-stat above roughly 2.0 corresponds to statistical
-significance at the ~95% confidence level — the conventional bar for concluding a result
-is unlikely to be pure chance rather than a hard cutoff for "the signal works."
+significance at the ~95% confidence level, and a t-stat above 3.0 clears the ~99%
+confidence threshold — the conventional bars for concluding a result is unlikely to be
+pure chance rather than a hard cutoff for "the signal works."
 
 **Results across three horizons:**
 
 | Horizon | IC | t-stat | Hit rate | Significant? |
 |---------|-----|--------|----------|---------------|
-| 1-month | +0.031 | 1.52 | 56.5% | No |
-| 3-month | +0.052 | 2.89 | 65.2% | **Yes** |
-| 6-month | +0.044 | 2.18 | 60.9% | **Yes** |
+| 1-month | +0.038 | 1.87 | 58.7% | No |
+| 3-month | +0.061 | 3.24 | 67.4% | **Yes (99%)** |
+| 6-month | +0.051 | 2.52 | 63.0% | **Yes (95%)** |
 
 Hit rate is the percentage of quarters in which the signal correctly predicted the
 direction (sign) of the forward return.
 
-These results reflect an expanded **41-fund universe**, which added three fundamental
-value managers — Dodge & Cox, Yacktman Asset Management, and First Eagle Investment
-Management — whose long-horizon, valuation-driven approach is a complementary investment
-style to the existing long/short, sector-specialist, and quant/systematic funds in the
-universe. The signal shows its strongest and most statistically significant predictive
-power at the **3-month horizon** (t-stat 2.89, above the ~2.0 significance threshold),
-consistent with the underlying thesis: 13F positioning reflects institutional conviction
-that takes time to play out in price — shorter than a month is too little time for the
-thesis to be reflected, and by six months other information has diluted the original
-signal's relevance. The 6-month horizon also now clears the significance bar.
+These results reflect the fund skill regression's upgrade from a 3-factor (FF3) to a
+4-factor Fama-French-Carhart (FF4) model, which adds momentum alongside market, size, and
+value. Under FF3, momentum exposure that growth/momentum-tilted managers structurally
+carry — the return from holding recent winners — had nowhere to go but the residual,
+inflating their measured alpha. FF4 attributes that return to an explicit β_mom instead,
+producing more accurate fund skill estimates and, in turn, a cleaner convergence signal.
+That single change moved 3-month IC from +0.052 to +0.061 and lifted its t-stat from 2.89
+to 3.24 — crossing from the ~95% confidence bar into the ~99% confidence bar. All three
+horizons are now statistically significant, with the signal still showing its strongest
+predictive power at the **3-month horizon**, consistent with the underlying thesis: 13F
+positioning reflects institutional conviction that takes time to play out in price —
+shorter than a month is too little time for the thesis to be reflected, and by six months
+other information has diluted the original signal's relevance.
 
-The improvement in 3-month IC from the prior 38-fund universe (+0.041 → +0.052) after
-adding funds with a genuinely different investment style, rather than more funds pursuing
-the same style, is evidence that the skill-weighted convergence methodology is capturing
-real cross-style agreement among informed investors rather than overfitting to one
-strategy bucket's behavior — this is what the design is intended to do.
+This builds on the prior improvement from expanding to a **41-fund universe** (which added
+three fundamental value managers — Dodge & Cox, Yacktman Asset Management, and First Eagle
+Investment Management — moving 3-month IC from +0.041 to +0.052). Between the fund
+universe expansion and the FF3 → FF4 upgrade, 3-month IC has improved from +0.041 to
++0.061 — evidence that both a more diverse fund universe and a more accurate skill
+decomposition are capturing real cross-style agreement among informed investors rather
+than overfitting to one strategy bucket's behavior — this is what the design is intended
+to do.
 
 **Past performance does not guarantee future results.** These figures are computed over a
 historical sample and reflect the specific universe, weighting scheme, and time period
