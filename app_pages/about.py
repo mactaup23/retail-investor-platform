@@ -218,7 +218,7 @@ st.subheader("Module 3 — EDGAR ingestion and fund skill scoring")
 
 st.markdown("""
 **13F universe**
-41 confirmed hedge funds across four strategy buckets:
+60 confirmed funds across eight strategy buckets:
 - Long/short equity: Viking Global, Lone Pine, Coatue, Tiger Global, Maverick, D1 Capital,
   Glenview, Whale Rock, Senator Investment, Light Street
 - Fundamental value: Pershing Square, Third Point, Baupost, ValueAct, Starboard, Greenlight,
@@ -228,6 +228,13 @@ st.markdown("""
 - Sector specialist: Altimeter, Dragoneer, Greenoaks (technology); Baker Bros, OrbiMed,
   RA Capital (healthcare/biotech); Kayne Anderson, SailingStone (energy); Corsair, Brahman,
   Pzena (financials)
+- Sovereign wealth: Norges Bank Investment Management, Temasek Holdings
+- Insurance portfolio: Berkshire Hathaway, Markel Group, Fairfax Financial Holdings, Loews
+- University endowment: Harvard Management Company, UTIMCO
+- Long-only institutional: Wellington Management Group, Tweedy Browne, Baron Capital Group
+  (BAMCO), Harris Associates, Davis Advisors, Duquesne Family Office, Royce Investment
+  Partners, Elliott Investment Management, Ruane, Cunniff & Goldfarb, Capital World
+  Investors, T. Rowe Price Investment Management
 
 **EDGAR ingestion**
 Quarterly 13F-HR filings are fetched from SEC EDGAR's full-text search index. Each

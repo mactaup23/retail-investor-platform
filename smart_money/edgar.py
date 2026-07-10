@@ -44,7 +44,10 @@ class HoldingRow(TypedDict):
     cusip: str
     issuer_name: str
     title_of_class: str
-    value_usd: int              # raw dollars, direct from filing (empirically verified: Viking/Visa 1912630634 → $302.24/sh ✓)
+    value_usd: int              # raw dollars (empirically verified: Viking/Visa 1912630634 → $302.24/sh ✓).
+                                 # A minority of filers report in thousands per the literal SEC spec instead —
+                                 # see _VALUE_UNIT_SCALE below. Already corrected to raw dollars by the time
+                                 # this row is built; no further scaling needed downstream.
     shares: int
     shares_type: str            # "SH" or "PRN"
     investment_discretion: str  # "Sole" | "Shared" | "Other"
@@ -106,6 +109,37 @@ def _get(url: str, **kwargs) -> requests.Response:
 def _pad_cik(cik: str | int) -> str:
     """Zero-pad CIK to 10 digits as required by the submissions endpoint."""
     return str(int(cik)).zfill(10)
+
+
+# ---------------------------------------------------------------------------
+# Per-filer value-unit overrides
+# ---------------------------------------------------------------------------
+# The SEC 13F spec says the infoTable "value" field is in thousands of
+# dollars. Empirically, the vast majority of filers in this universe ignore
+# that and report raw dollars instead (verified: Viking/Visa 1912630634 →
+# $302.24/sh). A minority of filers DO follow the literal thousands spec.
+# Each entry below was verified by cross-checking a sampled infoTable row's
+# (value / shares) against a real contemporaneous market price — re-run
+# scripts/verify_value_units.py against any new fund before assuming it
+# belongs in (or is absent from) this table.
+#
+# Keyed by zero-padded CIK. Any CIK not listed here defaults to scale=1
+# (raw dollars) — i.e. today's behavior for the existing 38-fund universe
+# is completely unchanged.
+_VALUE_UNIT_SCALE: dict[str, int] = {
+    "0001536411": 1000,   # Duquesne Family Office LLC — verified via AMZN
+                          # (value=9539, 45,800 sh → $208/sh only as thousands;
+                          # $0.21/sh as raw dollars is impossible)
+    "0001897612": 1000,   # T. Rowe Price Investment Management, Inc. —
+                          # verified via AGCO Corp (value=59944, 517,336 sh →
+                          # $115.90/sh only as thousands; $0.12/sh as raw
+                          # dollars is impossible)
+}
+
+
+def _value_scale(cik: str | int) -> int:
+    """Return the value-field multiplier for this CIK (1 = raw dollars, the default)."""
+    return _VALUE_UNIT_SCALE.get(_pad_cik(cik), 1)
 
 
 # ---------------------------------------------------------------------------
@@ -283,8 +317,15 @@ def _detect_ns(root: ET.Element) -> str:
     return _NS_VARIANTS[0]
 
 
-def _parse_infotable_xml(xml_bytes: bytes) -> list[HoldingRow]:
-    """Parse a 13F information table XML document into holding dicts."""
+def _parse_infotable_xml(xml_bytes: bytes, value_scale: int = 1) -> list[HoldingRow]:
+    """
+    Parse a 13F information table XML document into holding dicts.
+
+    value_scale corrects filers that report the "value" field in thousands
+    per the literal SEC spec instead of raw dollars (see _VALUE_UNIT_SCALE).
+    Default of 1 preserves today's raw-dollar behavior for every filer not
+    in that table.
+    """
     root = ET.fromstring(xml_bytes)
     ns_uri = _detect_ns(root)
     ns = {"ns": ns_uri}
@@ -302,7 +343,7 @@ def _parse_infotable_xml(xml_bytes: bytes) -> list[HoldingRow]:
             cusip                 = _text(g("cusip")),
             issuer_name           = _text(g("nameOfIssuer")),
             title_of_class        = _text(g("titleOfClass")),
-            value_usd             = _int(g("value")),
+            value_usd             = _int(g("value")) * value_scale,
             shares                = _int(shrs_el.find("ns:sshPrnamt", ns) if shrs_el is not None else None),
             shares_type           = _text(shrs_el.find("ns:sshPrnamtType", ns) if shrs_el is not None else None, "SH"),
             investment_discretion = _text(g("investmentDiscretion"), "Sole"),
@@ -327,10 +368,12 @@ def fetch_holdings(cik: str | int, accession_number: str) -> list[HoldingRow]:
     Fetch and parse the information table for a single filing.
 
     Returns holdings in the order they appear in the XML (not sorted).
+    Applies this CIK's value-unit scale (see _VALUE_UNIT_SCALE) so value_usd
+    is always in raw dollars regardless of what the filer's software reported.
     """
     infotable_url = _find_infotable_url(cik, accession_number)
     xml_bytes = _get(infotable_url).content
-    return _parse_infotable_xml(xml_bytes)
+    return _parse_infotable_xml(xml_bytes, value_scale=_value_scale(cik))
 
 
 def fetch_latest_holdings(cik: str | int) -> tuple[FilingMeta, list[HoldingRow]]:

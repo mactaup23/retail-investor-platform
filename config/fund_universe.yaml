@@ -8,7 +8,7 @@ meta:
     CIK numbers marked cik_status: verify require EDGAR lookup before pipeline use.
     Funds with filing_flags require special handling during data ingestion.
     Conditional funds (conditional: true) must pass their threshold check before inclusion.
-  total_funds: 41          # 41 confirmed + 1 conditional (Situational Awareness LP)
+  total_funds: 60          # 60 confirmed + 1 conditional (Situational Awareness LP)
   edgar_search_url: "https://efts.sec.gov/LATEST/search-index?forms=13F-HR"
   filing_threshold_usd: 100_000_000
 
@@ -17,6 +17,10 @@ buckets:
   - fundamental_value
   - quant_systematic
   - sector_specialist
+  - sovereign_wealth
+  - insurance_portfolio
+  - university_endowment
+  - long_only_institutional
 
 funds:
 
@@ -561,6 +565,328 @@ funds:
       files 13F as an institutional manager; holdings are detailed and consistent
       across quarters — good anchor for financials sector baseline. Primarily
       long-only; 13F is a complete picture of the equity book.
+
+  # ──────────────────────────────────────────────
+  # BUCKET 5: SOVEREIGN WEALTH
+  # ──────────────────────────────────────────────
+  # Added to test whether longer, more continuous filing histories from
+  # long-tenured institutional managers resolve the FF7 skill-scoring
+  # overfitting issue noted in Module 3 / About page.
+
+  - name: "Norges Bank Investment Management"
+    manager: "Nicolai Tangen (CEO)"
+    bucket: sovereign_wealth
+    aum_tier: "very_large"       # ~$865B disclosed US equity sleeve (Q1 2026)
+    cik: "1374170"                # verified via EDGAR company search, confirmed 13F-HR filer
+    cik_status: confirmed
+    filing_flags:
+      - confidential_treatment_placeholder
+    filing_completeness_note: >
+      Files under a standing SEC confidential-treatment arrangement: the
+      current-quarter public information table is a placeholder (zero
+      disclosed rows), while actual prior-quarter holdings are disclosed
+      later via a same-day 13F-HR/A amendment once the confidential period
+      expires (observed lag: ~13 months). Position count (1,507) and total
+      value (~$865B) come from the filer's own primary_doc.xml summary page,
+      not the public infoTable — ingest from the amendment filings, not the
+      primary 13F-HR.
+    notes: >
+      World's largest sovereign wealth fund (Norway's Government Pension Fund
+      Global); long-only, benchmark-aware with an active management sleeve;
+      103 filings on record — one of the longest, most continuous histories
+      in this universe.
+
+  - name: "Temasek Holdings"
+    manager: "Dilhan Pillay Sandrasegara (CEO)"
+    bucket: sovereign_wealth
+    aum_tier: "large"            # ~$30.5B disclosed US equity sleeve
+    cik: "1021944"
+    cik_status: confirmed
+    filing_flags: []
+    notes: >
+      Singapore's state investment company; disclosed 13F book (152
+      positions) is a combined report alongside 39 other included managers,
+      reflecting Temasek's multi-manager structure. Patient, long-horizon
+      capital.
+
+  # ──────────────────────────────────────────────
+  # BUCKET 6: INSURANCE PORTFOLIO
+  # ──────────────────────────────────────────────
+
+  - name: "Berkshire Hathaway"
+    manager: "Warren Buffett / Greg Abel"
+    bucket: insurance_portfolio
+    aum_tier: "very_large"       # ~$263B
+    cik: "1067983"
+    cik_status: confirmed
+    filing_flags: []
+    notes: >
+      Archetypal long-horizon concentrated value insurer; extremely low
+      turnover; 110 filings on record, the longest continuous history of any
+      fund in this universe.
+
+  - name: "Markel Group"
+    manager: "Thomas S. Gayner (Co-CEO)"
+    bucket: insurance_portfolio
+    aum_tier: "large"            # ~$11.9B
+    cik: "1096343"
+    cik_status: confirmed
+    filing_flags: []
+    notes: >
+      "Berkshire-style" insurance holding company; concentrated, patient
+      equity book funded by float. Entity renamed from "Markel Corporation"
+      to "Markel Group Inc." on EDGAR circa 2023 — same underlying CIK.
+
+  - name: "Fairfax Financial Holdings"
+    manager: "Prem Watsa"
+    bucket: insurance_portfolio
+    aum_tier: "small_mid"        # ~$1.9B
+    cik: "915191"
+    cik_status: confirmed
+    filing_flags: []
+    notes: >
+      Canadian insurance holding company run on explicitly Buffett-inspired
+      principles. Concentrated disclosed book (29 positions) by design —
+      Watsa makes a small number of large, high-conviction bets rather than
+      running a diversified equity sleeve; not a data gap.
+
+  - name: "Loews Corporation"
+    manager: "James Tisch"
+    bucket: insurance_portfolio
+    aum_tier: "large"            # ~$11.9B
+    cik: "60086"
+    cik_status: confirmed
+    filing_flags: []
+    notes: >
+      Diversified insurance/conglomerate holding company (CNA Financial,
+      Boardwalk Pipeline); family-run for three generations; 109 filings on
+      record.
+
+  # ──────────────────────────────────────────────
+  # BUCKET 7: UNIVERSITY ENDOWMENT
+  # ──────────────────────────────────────────────
+
+  - name: "Harvard Management Company"
+    manager: "N.P. Narvekar (CEO)"
+    bucket: university_endowment
+    aum_tier: "small_mid"        # ~$1.8B disclosed public equity sleeve
+    cik: "1082621"
+    cik_status: confirmed
+    filing_flags: []
+    notes: >
+      Manages Harvard's endowment, the large majority of which sits in
+      private/alternative assets outside 13(f) scope — only 17 disclosed
+      positions, right at the edge of usability. Included deliberately as a
+      test case for whether a thin institutional equity sleeve still produces
+      a usable skill signal, not because the book itself is large.
+
+  - name: "UTIMCO"
+    manager: "Investment Committee"
+    bucket: university_endowment
+    aum_tier: "small"            # ~$687M
+    cik: "1019231"                # resolved via "University of Texas/Texas A&M Investment
+                                  # Management Co" — "UTIMCO" alone does not resolve on
+                                  # EDGAR company search
+    cik_status: confirmed
+    filing_flags: []
+    notes: >
+      Manages the University of Texas/Texas A&M System endowment and
+      permanent university funds. Modest disclosed value but a healthy 301
+      positions — good breadth for an endowment-style long-only mandate.
+
+  # ──────────────────────────────────────────────
+  # BUCKET 8: LONG-ONLY INSTITUTIONAL (RIAs)
+  # ──────────────────────────────────────────────
+
+  - name: "Wellington Management Group"
+    manager: "Investment Committee"
+    bucket: long_only_institutional
+    aum_tier: "very_large"       # ~$535B
+    cik: "902219"                 # the actual combined-report lead filer
+    cik_status: confirmed
+    filing_flags:
+      - combined_report_lead_filer
+    filing_completeness_note: >
+      Wellington operates 8+ regional legal entities (Wellington Management
+      Co LLP, and International/Canada/Singapore/Japan/Hong Kong/Australia/
+      Europe affiliates) that each file 13F-NT (notice only, no holdings),
+      referencing this CIK as the actual reporting entity. Do not attempt to
+      also ingest the regional subsidiary CIKs — they carry no holdings data.
+    notes: >
+      One of the largest independent, employee-owned asset managers
+      globally; broad, diversified long-only book — 7,458 positions, the
+      highest position count in this universe by a wide margin.
+
+  - name: "Tweedy, Browne Company"
+    manager: "William Browne / Robert Wyckoff"
+    bucket: long_only_institutional
+    aum_tier: "small_mid"        # ~$1.26B
+    cik: "732905"
+    cik_status: confirmed
+    filing_flags: []
+    notes: >
+      Classic Graham-and-Dodd deep value shop with roots tracing to Benjamin
+      Graham's original brokerage; concentrated, low-turnover, long-only
+      book (93 positions).
+
+  - name: "Baron Capital Group"
+    manager: "Ron Baron"
+    bucket: long_only_institutional
+    aum_tier: "large"            # ~$33.1B
+    cik: "1017918"                 # actual 13F filer is "BAMCO Inc /NY/", Baron's
+                                  # registered adviser subsidiary
+    cik_status: confirmed
+    filing_flags: []
+    notes: >
+      Concentrated growth-equity manager, added deliberately for style
+      diversity since this batch (and most of the existing fundamental_value
+      bucket) skews value-oriented. Genuinely growth in mandate, not just in
+      name. EDGAR filer name is "BAMCO Inc," not "Baron Capital Group" — the
+      brand name does not resolve directly.
+
+  - name: "Harris Associates"
+    manager: "Bill Nygren (CIO)"
+    bucket: long_only_institutional
+    aum_tier: "very_large"       # ~$75.0B
+    cik: "813917"
+    cik_status: confirmed
+    filing_flags: []
+    notes: >
+      Runs the full Oakmark fund family from a single filer, including
+      Oakmark International — some of the 224 disclosed positions are
+      foreign ADRs/ordinaries rather than pure domestic names. Treat this
+      fund's book as mostly-but-not-entirely US-domestic; do not assume a
+      pure US signal the way you can for Davis or Baron.
+
+  - name: "Davis Advisors"
+    manager: "Christopher Davis"
+    bucket: long_only_institutional
+    aum_tier: "large"            # ~$21.8B
+    cik: "1036325"                 # actual 13F filer is "Davis Selected Advisers" —
+                                  # the brand name "Davis Advisors" does not resolve
+                                  # directly
+    cik_status: confirmed
+    filing_flags: []
+    notes: >
+      Multi-generational, family-run value manager (three generations across
+      Shelby, Chris, and Andrew Davis); long-tenured, low-turnover, genuinely
+      US-domestic book (112 positions).
+
+  - name: "Duquesne Family Office"
+    manager: "Stanley Druckenmiller"
+    bucket: long_only_institutional
+    aum_tier: "mid"              # ~$3.38B (corrected — see filing_flags note)
+    cik: "1536411"
+    cik_status: confirmed
+    filing_flags:
+      - value_field_in_thousands
+    filing_completeness_note: >
+      This filer's infoTable "value" field is in thousands, not raw
+      dollars — verified by cross-checking an Amazon position (value=9539,
+      45,800 shares): only consistent with a real AMZN price ($208/share) if
+      value is in thousands; raw dollars implies an impossible $0.21/share.
+      Handled via the per-filer override in smart_money/edgar.py
+      (_VALUE_UNIT_SCALE); value_usd is corrected to true raw dollars at
+      ingestion time, so no special handling is needed downstream. True
+      total value is ~$3.38B.
+    notes: >
+      Druckenmiller's family office since converting from a hedge fund in
+      2010; macro-influenced discretionary equity positioning fills a real
+      gap since the rest of this universe is almost entirely bottom-up stock
+      picking. Filing pattern has been consistent and gap-free (58 filings
+      on record) — the anticipated "family office inconsistent filing" risk
+      did not materialize.
+
+  - name: "Royce Investment Partners"
+    manager: "Investment Committee"
+    bucket: long_only_institutional
+    aum_tier: "large"            # ~$10.1B
+    cik: "906304"                  # actual 13F filer is "Royce & Associates LP" —
+                                  # the current brand name "Royce Investment Partners"
+                                  # does not resolve directly
+    cik_status: confirmed
+    filing_flags: []
+    notes: >
+      Small-cap specialist; fills a real gap since the existing universe
+      skews large/mega-cap. High position count (774) reflects genuine
+      small-cap diversification rather than concentration.
+
+  - name: "Elliott Investment Management"
+    manager: "Paul Singer"
+    bucket: long_only_institutional
+    aum_tier: "large"            # ~$20.1B
+    cik: "1791786"                 # the legacy CIK "Elliott Management Corp" (1048445)
+                                  # stopped filing in 2020 — use this CIK, not that one
+    cik_status: confirmed
+    filing_flags: []
+    notes: >
+      Distressed/special-situations-flavored activist. Disclosed long book
+      (33 positions) carries a genuinely different signature from the other
+      activists already in this universe (Pershing Square, Starboard,
+      ValueAct): six separate sector/index ETF positions used as a macro
+      hedging overlay, plus a distressed-shipping (Seadrill, Transocean) and
+      precious-metals-royalty (Wheaton, Triple Flag, Osisko) cluster none of
+      the existing activists carry. Not a fourth generic activist book.
+
+  - name: "Ruane, Cunniff & Goldfarb"
+    manager: "Investment Committee (post-2018 restructuring)"
+    bucket: long_only_institutional
+    aum_tier: "mid"              # ~$6.03B
+    cik: "1720792"                 # the "L.P." entity — NOT "RUANE, CUNNIFF & GOLDFARB
+                                  # INC" (728014, dark since 2018) or "...LLC" (85624, an
+                                  # unrelated broker-dealer affiliate that never filed 13F)
+    cik_status: confirmed
+    filing_flags: []
+    notes: >
+      Adviser to the Sequoia Fund (SEQUX; converting to an ETF, ticker SEQ,
+      per a 2026 prospectus). EDGAR has three distinct "Ruane Cunniff"
+      entities; this L.P. CIK has filed 13F-HR continuously since 2018
+      through the present (most recent: 2026-05-15) — the "Inc" entity's
+      2018 stoppage looked like a firm shutdown but was actually an internal
+      Inc-to-LP conversion, not a manager departure. Early Buffett-associated
+      concentrated-value philosophy (Bill Ruane was a Buffett protege) —
+      genuinely distinct lineage from the other value managers here.
+
+  - name: "Capital World Investors"
+    manager: "Multi-counsel system (Investment Committee)"
+    bucket: long_only_institutional
+    aum_tier: "very_large"       # ~$732.9B
+    cik: "1422849"
+    cik_status: confirmed
+    filing_flags: []
+    notes: >
+      One of Capital Group/American Funds' 5+ legally separate 13F-filing
+      sub-advisers (each files independently); chosen as the single
+      representative entity for "Capital Group" for being the largest
+      (620 positions, ~$733B). Manages global/international mandates (New
+      Perspective, EuroPacific Growth) — like Harris Associates, treat this
+      fund's book as having real international exposure, not a pure
+      US-domestic signal.
+
+  - name: "T. Rowe Price Investment Management"
+    manager: "Investment Committee"
+    bucket: long_only_institutional
+    aum_tier: "very_large"       # ~$145.2B (corrected — see filing_flags note)
+    cik: "1897612"                 # the standalone post-2022-restructuring entity —
+                                  # deliberately NOT "Price T Rowe Associates Inc /MD/"
+                                  # (CIK 80255), a combination-report filer blending 6+
+                                  # affiliated managers into one composite
+    cik_status: confirmed
+    filing_flags:
+      - value_field_in_thousands
+    filing_completeness_note: >
+      Like Duquesne Family Office above, this filer's infoTable "value"
+      field is in thousands, not raw dollars — verified by cross-checking an
+      AGCO Corp position (value=59944, 517,336 shares): only consistent at
+      $115.90/share as thousands, versus an impossible $0.12/share as raw
+      dollars. Handled via the same per-filer override in
+      smart_money/edgar.py (_VALUE_UNIT_SCALE). True total value is ~$145.2B.
+    notes: >
+      Chosen deliberately over T. Rowe Price's aggregated combination-report
+      filer (CIK 80255) to avoid blending 6+ affiliated managers into one
+      composite skill signal. This standalone entity is the modern successor
+      adviser post-2022 restructuring and will keep filing independently
+      going forward.
 
   # ──────────────────────────────────────────────
   # CONDITIONAL FUNDS
