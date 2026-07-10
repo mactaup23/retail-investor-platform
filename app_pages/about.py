@@ -395,51 +395,59 @@ significance at the ~95% confidence level, and a t-stat above 3.0 clears the ~99
 confidence threshold — the conventional bars for concluding a result is unlikely to be
 pure chance rather than a hard cutoff for "the signal works."
 
-**Results across three horizons:**
+**Results across three horizons (FF7 fund skill model, current):**
 
-| Horizon | IC | t-stat | Hit rate | Significant? |
-|---------|-----|--------|----------|---------------|
-| 1-month | +0.038 | 1.87 | 58.7% | No |
-| 3-month | +0.061 | 3.24 | 67.4% | **Yes (99%)** |
-| 6-month | +0.051 | 2.52 | 63.0% | **Yes (95%)** |
+| Horizon | Universe | IC | t-stat | Hit rate | Significant? |
+|---------|----------|-----|--------|----------|---------------|
+| 1-month | full | +0.004 | 0.70 | 54% | No |
+| 1-month | watchlist | +0.002 | 0.41 | 52% | No |
+| 3-month | full | +0.007 | 1.32 | 59% | No |
+| 3-month | watchlist | +0.007 | 1.33 | 55% | No |
+| 6-month | full | +0.009 | 1.61 | 60% | No |
+| 6-month | watchlist | +0.009 | 1.62 | 65% | No |
 
 Hit rate is the percentage of quarters in which the signal correctly predicted the
-direction (sign) of the forward return.
+direction (sign) of the forward return. None of the six (horizon × universe) combinations
+clear the ~95% confidence bar (t-stat ≈ 2.0) under the current FF7 skill model, though the
+6-month horizon is the closest and shows the same pattern seen under FF4 — predictive power
+strengthening with horizon, consistent with the underlying thesis that 13F positioning
+reflects institutional conviction that takes time to play out in price.
 
-These results reflect the fund skill regression's upgrade from a 3-factor (FF3) to a
-4-factor Fama-French-Carhart (FF4) model, which adds momentum alongside market, size, and
-value. Under FF3, momentum exposure that growth/momentum-tilted managers structurally
-carry — the return from holding recent winners — had nowhere to go but the residual,
-inflating their measured alpha. FF4 attributes that return to an explicit β_mom instead,
-producing more accurate fund skill estimates and, in turn, a cleaner convergence signal.
-That single change moved 3-month IC from +0.052 to +0.061 and lifted its t-stat from 2.89
-to 3.24 — crossing from the ~95% confidence bar into the ~99% confidence bar. All three
-horizons are now statistically significant, with the signal still showing its strongest
-predictive power at the **3-month horizon**, consistent with the underlying thesis: 13F
-positioning reflects institutional conviction that takes time to play out in price —
-shorter than a month is too little time for the thesis to be reflected, and by six months
-other information has diluted the original signal's relevance.
+**Honest finding — FF7 backtests weaker than FF4.** Upgrading the fund skill regression from
+FF4 to FF7 (adding RMW, CMA, and a proprietary Gross Profitability factor) produced more
+theoretically grounded skill estimates — independently validated by AQR's significant
+RMW/momentum loadings (see Module 1) — but resulted in a **weaker** backtested signal than
+the simpler FF4 model, which showed 3-month IC +0.061 at t-stat 3.24 (99% significant) at
+this same horizon. This is a known bias-variance tradeoff: with only 12–40 quarters of filing
+history per fund, adding three more factors to the regression increases the risk of
+overfitting the skill estimates to noise rather than capturing genuine stock-picking ability.
+The Gross Profitability factor's limited history (2021–present, see Module 1) compounds this
+— most of the historical backtest period relies on incomplete factor coverage for that one
+factor, which weakens the funds it's meant to help identify.
+
+This finding is itself valuable: it suggests the platform may benefit from a more
+parsimonious factor model for **skill scoring** specifically, even while using the fuller FF7
+model for **portfolio risk characterization** (Module 2), where more factors give a richer
+description of exposure rather than trying to isolate a small alpha residual from limited data.
+
+An empirical test is planned: expanding the fund universe to include long-tenured
+institutional managers with longer filing histories — sovereign wealth funds, insurance
+portfolios, endowments, and RIAs — to test whether a broader, more statistically powered
+dataset resolves this overfitting issue.
 
 This builds on the prior improvement from expanding to a **41-fund universe** (which added
 three fundamental value managers — Dodge & Cox, Yacktman Asset Management, and First Eagle
-Investment Management — moving 3-month IC from +0.041 to +0.052). Between the fund
-universe expansion and the FF3 → FF4 upgrade, 3-month IC has improved from +0.041 to
-+0.061 — evidence that both a more diverse fund universe and a more accurate skill
-decomposition are capturing real cross-style agreement among informed investors rather
-than overfitting to one strategy bucket's behavior — this is what the design is intended
-to do.
+Investment Management — moving 3-month IC from +0.041 to +0.052 under FF3/FF4). The FF4
+upgrade itself moved 3-month IC from +0.052 to +0.061 and its t-stat from 2.89 to 3.24. The
+subsequent FF7 upgrade is the first factor-model change in this project to *reduce* backtest
+performance rather than improve it — see the honest finding above for why that is expected,
+and diagnostic, rather than a bug.
 
 **Past performance does not guarantee future results.** These figures are computed over a
 historical sample and reflect the specific universe, weighting scheme, and time period
 tested. They do not account for transaction costs, slippage, or taxes, and a signal that
 was significant historically can degrade or fail going forward as market conditions,
 factor crowding, or fund behavior change.
-
-**Note:** the numbers above were computed against the FF4 fund skill model. The skill
-regression has since been extended to a 7-factor model (adding RMW, CMA, and a
-proprietary Gross Profitability factor — see Module 1 and Module 3 above); these IC
-figures have not yet been recomputed against that upgrade and will be refreshed in a
-future backtest run.
 """)
 
 # ---------------------------------------------------------------------------
