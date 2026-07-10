@@ -48,6 +48,16 @@ _CACHE_TOLERANCE = 5    # calendar days tolerance on each boundary for cache hit
 _UPSERT_CHUNK    = 500  # rows per INSERT batch
 
 
+def _to_yfinance_symbol(ticker: str) -> str:
+    """
+    Translate a dual-class ticker from OpenFIGI/Bloomberg slash notation
+    (e.g. "BRK/A", "BRK/B", "BF/B") to yfinance's hyphen notation
+    ("BRK-A", "BRK-B", "BF-B"). Security.ticker keeps the slash form since
+    that's the conventional display format used elsewhere (display_name).
+    """
+    return ticker.replace("/", "-")
+
+
 # ---------------------------------------------------------------------------
 # Date helpers
 # ---------------------------------------------------------------------------
@@ -158,12 +168,17 @@ def _fetch_from_yfinance(
 
     yfinance end date is exclusive — we add 1 day to include the requested end.
     yfinance 1.4.x always returns MultiIndex columns (price_type, ticker) when
-    given a list; we access raw["Close"][ticker] and raw["Adj Close"][ticker].
+    given a list; we access raw["Close"][symbol] and raw["Adj Close"][symbol].
+
+    Dual-class tickers (e.g. "BRK/A") use OpenFIGI/Bloomberg slash notation
+    in `tickers`; yfinance requires hyphens, so we query the translated
+    symbol but key the returned dict by the original ticker.
     """
     end_excl = end + datetime.timedelta(days=1)
+    symbol_map = {ticker: _to_yfinance_symbol(ticker) for ticker in tickers}
 
     raw = yf.download(
-        tickers,
+        list(symbol_map.values()),
         start=start.isoformat(),
         end=end_excl.isoformat(),
         auto_adjust=False,
@@ -175,10 +190,10 @@ def _fetch_from_yfinance(
         return {}
 
     out: dict[str, pd.DataFrame] = {}
-    for ticker in tickers:
+    for ticker, symbol in symbol_map.items():
         try:
-            close_s     = raw["Close"][ticker]
-            adj_close_s = raw["Adj Close"][ticker]
+            close_s     = raw["Close"][symbol]
+            adj_close_s = raw["Adj Close"][symbol]
         except (KeyError, TypeError):
             continue
 
