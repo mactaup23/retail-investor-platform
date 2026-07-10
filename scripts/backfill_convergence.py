@@ -8,11 +8,24 @@ quarters' persisted ConvergenceScore rows (new/accelerating/fading/stable), so
 missing quarters are processed oldest-first and persisted immediately —
 same pattern as backfill_signals.py.
 
+--force mode
+------------
+Gap-filling alone only covers quarters that have never been scored. It does
+NOT pick up quarters whose FundSkillResult skill weights changed after the
+ConvergenceScore row was already written — e.g. a factor model upgrade
+(FF3 → FF4 → FF7) re-scores every fund's alpha, which feeds directly into
+_skill_weight() and therefore convergence_score. Pass --force to wipe every
+ConvergenceScore row and recompute all Filing quarters from scratch,
+oldest-first, then chain into backfill_signals.py --force so FinalSignal is
+rebuilt too. Run this whenever skill scores change (new factors, new funds).
+
 Usage
 -----
     .venv/bin/python scripts/backfill_convergence.py
+    .venv/bin/python scripts/backfill_convergence.py --force
 """
 
+import argparse
 import subprocess
 import sys
 from pathlib import Path
@@ -31,24 +44,45 @@ def _distinct_periods(model, period_field) -> list:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Wipe all ConvergenceScore (and downstream FinalSignal) rows and "
+             "recompute every quarter from scratch (use after FundSkillResult / "
+             "skill weights change, e.g. a factor model upgrade).",
+    )
+    args = parser.parse_args()
+
     init_db()
 
     filing_periods = _distinct_periods(Filing, Filing.period_of_report)
-    conv_periods = _distinct_periods(ConvergenceScore, ConvergenceScore.period)
-    conv_set = set(conv_periods)
-    missing = [p for p in filing_periods if p not in conv_set]
 
-    print("[backfill_convergence] Gap check")
-    print(f"  Filing quarters           : {len(filing_periods)}")
-    print(f"  ConvergenceScore quarters : {len(conv_periods)}")
-    print(f"  Missing (to backfill)     : {len(missing)}")
-    if missing:
-        print(f"    {', '.join(str(p) for p in missing)}")
-    print()
-
-    if not missing:
-        print("Nothing to backfill in ConvergenceScore.")
+    if args.force:
+        deleted = ConvergenceScore.delete().execute()
+        print("[backfill_convergence] --force: wiped ConvergenceScore")
+        print(f"  Rows deleted              : {deleted}")
+        print(f"  Filing quarters           : {len(filing_periods)}")
+        print(f"  Recomputing all quarters from scratch (oldest → newest)…")
+        print()
+        missing = filing_periods
     else:
+        conv_periods = _distinct_periods(ConvergenceScore, ConvergenceScore.period)
+        conv_set = set(conv_periods)
+        missing = [p for p in filing_periods if p not in conv_set]
+
+        print("[backfill_convergence] Gap check")
+        print(f"  Filing quarters           : {len(filing_periods)}")
+        print(f"  ConvergenceScore quarters : {len(conv_periods)}")
+        print(f"  Missing (to backfill)     : {len(missing)}")
+        if missing:
+            print(f"    {', '.join(str(p) for p in missing)}")
+        print()
+
+        if not missing:
+            print("Nothing to backfill in ConvergenceScore.")
+
+    if missing:
         backfilled = 0
         for period in missing:
             results = convergence.scan_quarter(period)
@@ -58,16 +92,17 @@ def main() -> None:
 
         total_conv_after = ConvergenceScore.select(ConvergenceScore.period).distinct().count()
         print()
-        print(f"Backfilled {backfilled} quarter(s).")
-        print(f"Total ConvergenceScore quarters after backfill: {total_conv_after}")
+        print(f"{'Rebuilt' if args.force else 'Backfilled'} {backfilled} quarter(s).")
+        print(f"Total ConvergenceScore quarters after {'rebuild' if args.force else 'backfill'}: {total_conv_after}")
 
     print()
-    print("[backfill_convergence] Chaining into backfill_signals.py to populate FinalSignal…")
+    verb = "rebuild" if args.force else "populate"
+    print(f"[backfill_convergence] Chaining into backfill_signals.py to {verb} FinalSignal…")
     print("=" * 78)
-    result = subprocess.run(
-        [sys.executable, str(Path(__file__).parent / "backfill_signals.py")],
-        check=False,
-    )
+    cmd = [sys.executable, str(Path(__file__).parent / "backfill_signals.py")]
+    if args.force:
+        cmd.append("--force")
+    result = subprocess.run(cmd, check=False)
     print("=" * 78)
     if result.returncode != 0:
         print(f"backfill_signals.py exited with code {result.returncode}")
