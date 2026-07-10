@@ -402,53 +402,90 @@ significance at the ~95% confidence level, and a t-stat above 3.0 clears the ~99
 confidence threshold — the conventional bars for concluding a result is unlikely to be
 pure chance rather than a hard cutoff for "the signal works."
 
-**Results across three horizons (FF7 fund skill model, current):**
+**Results across three horizons (FF7 fund skill model, 60-fund universe, current):**
 
 | Horizon | Universe | IC | t-stat | Hit rate | Significant? |
 |---------|----------|-----|--------|----------|---------------|
-| 1-month | full | +0.004 | 0.70 | 54% | No |
-| 1-month | watchlist | +0.002 | 0.41 | 52% | No |
-| 3-month | full | +0.007 | 1.32 | 59% | No |
-| 3-month | watchlist | +0.007 | 1.33 | 55% | No |
-| 6-month | full | +0.009 | 1.61 | 60% | No |
-| 6-month | watchlist | +0.009 | 1.62 | 65% | No |
+| 1-month | full | +0.007 | 1.29 | 64% | No |
+| 1-month | watchlist | +0.006 | 1.05 | 64% | No |
+| 3-month | full | +0.008 | 1.51 | 57% | No |
+| 3-month | watchlist | +0.007 | 1.41 | 53% | No |
+| 6-month | full | +0.005 | 0.96 | 56% | No |
+| 6-month | watchlist | +0.005 | 0.92 | 60% | No |
 
 Hit rate is the percentage of quarters in which the signal correctly predicted the
 direction (sign) of the forward return. None of the six (horizon × universe) combinations
-clear the ~95% confidence bar (t-stat ≈ 2.0) under the current FF7 skill model, though the
-6-month horizon is the closest and shows the same pattern seen under FF4 — predictive power
-strengthening with horizon, consistent with the underlying thesis that 13F positioning
-reflects institutional conviction that takes time to play out in price.
+clear the ~95% confidence bar (t-stat ≈ 2.0). The 3-month horizon is closest, but note the
+pattern is no longer monotonic with horizon the way it was under FF4 — predictive power
+peaks at 3-month and weakens again by 6-month rather than strengthening throughout. That
+inversion is itself a symptom of the alpha-estimate noise discussed below, not a new signal
+about how quickly institutional conviction plays out in price.
 
-**Honest finding — FF7 backtests weaker than FF4.** Upgrading the fund skill regression from
-FF4 to FF7 (adding RMW, CMA, and a proprietary Gross Profitability factor) produced more
-theoretically grounded skill estimates — independently validated by AQR's significant
-RMW/momentum loadings (see Module 1) — but resulted in a **weaker** backtested signal than
-the simpler FF4 model, which showed 3-month IC +0.061 at t-stat 3.24 (99% significant) at
-this same horizon. This is a known bias-variance tradeoff: with only 12–40 quarters of filing
-history per fund, adding three more factors to the regression increases the risk of
-overfitting the skill estimates to noise rather than capturing genuine stock-picking ability.
-The Gross Profitability factor's limited history (2021–present, see Module 1) compounds this
-— most of the historical backtest period relies on incomplete factor coverage for that one
-factor, which weakens the funds it's meant to help identify.
+**FF7 overfitting hypothesis — tested directly, not confirmed.** This section documents that
+test end to end, including the result that didn't support the hypothesis, because that's a
+more honest account of the platform's research process than reporting only the improvements.
 
-This finding is itself valuable: it suggests the platform may benefit from a more
-parsimonious factor model for **skill scoring** specifically, even while using the fuller FF7
-model for **portfolio risk characterization** (Module 2), where more factors give a richer
-description of exposure rather than trying to isolate a small alpha residual from limited data.
+*1. The original finding.* Upgrading the fund skill regression from FF4 to FF7 (adding RMW,
+CMA, and a proprietary Gross Profitability factor) produced more theoretically grounded skill
+estimates — independently validated by AQR's significant RMW/momentum loadings (see Module 1)
+— but on the original 41-fund universe it produced a materially **weaker** backtested signal:
+3-month IC fell from +0.061 (t-stat 3.24, 99% significant) under FF4 to +0.007 (t-stat 1.32,
+not significant) under FF7. A real degradation, not sampling noise.
 
-An empirical test is planned: expanding the fund universe to include long-tenured
-institutional managers with longer filing histories — sovereign wealth funds, insurance
-portfolios, endowments, and RIAs — to test whether a broader, more statistically powered
-dataset resolves this overfitting issue.
+*2. The hypothesis.* With only 12–40 quarters of filing history per fund, adding three more
+factors to the regression worsens the data-to-parameter ratio, increasing the risk that the
+skill estimates fit noise in the fund's return history rather than capturing genuine
+stock-picking ability — a standard bias-variance tradeoff. Under this hypothesis, more
+quarters per fund should recover most of the lost signal.
+
+*3. The test.* The fund universe was expanded from 41 to 60 funds, specifically adding
+institutions with long, clean filing histories that a pure hedge-fund universe lacks:
+sovereign wealth funds (Norges Bank, Temasek), insurance portfolios (Berkshire, Markel,
+Fairfax, Loews), university endowments (Harvard, UTIMCO), and eleven long-tenured asset
+managers (Wellington, Tweedy Browne, Baron, Harris Associates, Davis Advisors, Duquesne,
+Royce, Elliott, Ruane Cunniff, Capital World, T. Rowe Price) — see Module 3 for the full
+bucket breakdown. If the overfitting hypothesis were correct, the added quarters of history
+should measurably recover 3-month IC toward the FF4 baseline.
+
+*4. Methodology verification.* Before trusting a null result, the skill-weighting
+implementation was checked directly rather than assumed correct: `convergence.py`'s
+`_skill_weight()` applies the documented weight tiers exactly as specified (unscored bucket
+weights, the ≥12-quarter reliability gate, the α-based clamp for scored funds), and all 47
+funds that received a skill score also have `n_quarters_gp` populated — the Gross
+Profitability factor's shorter coverage window is not silently dropping funds from the
+regression. `ConvergenceScore` and `FinalSignal` were also rebuilt from scratch (`--force`)
+across all 51 quarters to rule out stale pre-expansion data. No implementation bug was found.
+
+*5. The actual result.* 3-month IC on the full universe moved from +0.007 (t=1.32) to
++0.008 (t=1.51) — statistically and practically flat. **The overfitting hypothesis is not
+confirmed.** More quarters of fund history did not recover the FF4-era signal.
+
+*6. Why.* Of the 47 funds that received a skill score, 39 have an alpha t-stat below 1.5 —
+statistically indistinguishable from zero — and the median alpha across all scored funds is
++0.22% annualized, effectively nothing. Most of the newly added long-tenured institutions are
+large, broadly diversified allocators (sovereign wealth funds, insurance float portfolios,
+endowments) that behave like closet indexers with little detectable stock-picking skill under
+any factor model. Their skill weights cluster near the neutral 1.0 baseline regardless of how
+many quarters of history back the estimate, so adding them supplied statistical depth without
+supplying signal. The bias-variance story may still be real for individual funds, but fund
+*count* alone was not the lever that mattered here — fund *skill dispersion* is.
+
+*7. Next step.* This points toward FF4 being closer to the right complexity for **skill
+scoring** specifically, independent of universe size, rather than FF7's added factors being
+recoverable with more data. The next test is running FF4 skill scoring against the same
+60-fund universe as a clean comparison point. If FF4/60-funds outperforms FF7/60-funds by a
+similar margin to FF4/41-funds vs FF7/41-funds, that would support reverting the
+skill-scoring pipeline (Module 3/4) to FF4 specifically, while retaining FF7 for portfolio-level
+risk characterization (Module 2), where more factors describe exposure rather than trying to
+isolate a small alpha residual from a limited sample.
 
 This builds on the prior improvement from expanding to a **41-fund universe** (which added
 three fundamental value managers — Dodge & Cox, Yacktman Asset Management, and First Eagle
 Investment Management — moving 3-month IC from +0.041 to +0.052 under FF3/FF4). The FF4
-upgrade itself moved 3-month IC from +0.052 to +0.061 and its t-stat from 2.89 to 3.24. The
-subsequent FF7 upgrade is the first factor-model change in this project to *reduce* backtest
-performance rather than improve it — see the honest finding above for why that is expected,
-and diagnostic, rather than a bug.
+upgrade itself moved 3-month IC from +0.052 to +0.061 and its t-stat from 2.89 to 3.24. FF7
+remains the only factor-model change in this project to *reduce* backtest performance rather
+than improve it, and the 60-fund expansion is the first universe change that failed to help —
+both are documented above rather than smoothed over.
 
 **Past performance does not guarantee future results.** These figures are computed over a
 historical sample and reflect the specific universe, weighting scheme, and time period
