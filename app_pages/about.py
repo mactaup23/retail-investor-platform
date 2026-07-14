@@ -107,30 +107,50 @@ the residual, inflating measured alpha. Under FF4 it is captured by an explicit 
 instead, giving a cleaner separation of stock-picking skill from factor beta — the
 platform's stated thesis for Module 3/4.
 
-**FF4 → FF7: the platform's current factor roster**
-The full model now spans 7 factors: market, size (SMB), value (HML), profitability
-(RMW), investment (CMA), momentum (MOM), and gross profitability (GP). RMW and CMA come
-directly from Ken French's published 5-factor daily series (genuine academic data, full
-history to 1963) — there's no clean single-ETF proxy for either the way IWD/IWF works
-for value, so unlike momentum, RMW/CMA are **not** duplicated as ETF proxies here. GP is
-the platform's own proprietary construction (no Ken French analog exists for it) and is
-used specifically on the ETF-proxy individual-holding path alongside market/SMB/HML/MOM.
-Portfolio-level analysis, fund skill scoring, and stress testing (which already use Ken
-French data for market/SMB/HML/MOM) additionally pick up RMW and CMA from that same
-source, plus GP joined in as a separate series — see the fund skill scoring section
-below for how GP's shorter history is handled there.
+**FF4 → FF7: the platform's factor roster, and where each is used**
+The full model spans 7 factors: market, size (SMB), value (HML), profitability (RMW),
+investment (CMA), momentum (MOM), and gross profitability (GP). RMW and CMA come directly
+from Ken French's published 5-factor daily series (genuine academic data, full history to
+1963) — there's no clean single-ETF proxy for either the way IWD/IWF works for value, so
+unlike momentum, RMW/CMA are **not** duplicated as ETF proxies here. GP is the platform's
+own proprietary construction (no Ken French analog exists for it) and is used on the
+ETF-proxy individual-holding path alongside market/SMB/HML/MOM. Portfolio-level analysis
+and stress testing (Module 2, which already use Ken French data for market/SMB/HML/MOM)
+additionally pick up RMW and CMA from that same source, plus GP joined in as a separate
+series. **Fund skill scoring (Module 3/4) uses FF4 only** — market/SMB/HML/MOM, no
+RMW/CMA/GP — a deliberate scope decision after a backtest investigation found no
+measurable predictive benefit from the three additional factors on that module's short
+per-fund quarterly panels; see "Signal Validation" below for the full account, and
+CLAUDE.md for why this shouldn't be casually re-upgraded without re-running that
+validation.
 
-**GP's history is short — by design, not a bug**
-Ken French's RMW/CMA/MOM series have full history (1963/1927). GP does not: it's built
-from yfinance's free fundamentals endpoint, which exposes at most ~5 years of annual
-statements and ~5 quarters of quarterly statements per company — a hard limitation of
-the free data source. GP's coverage is therefore bounded to roughly **2021–present**.
-Wherever GP appears in this platform, treat it as **"Gross Profitability (2021-present)"**
-— a directionally useful but less statistically established factor than the other six,
-which all have multi-decade history. This is reflected in how fund skill scoring
-combines GP with the other factors (see Module 3 below) and in how the historical stress
-tests apply it (GP's contribution is omitted, not silently zeroed, for any scenario
-predating its coverage — see the stress test section).
+**GP's data source and coverage**
+GP is built from SEC EDGAR's XBRL `companyfacts` API (Revenue, COGS, Total Assets tagged
+facts, cross-referenced against SEC's own bulk ticker→CIK mapping) — not yfinance. This
+gives GP full **2013–2026** history, matching the platform's other 2013-era history floors
+(the 13F XML cutoff, MTUM's ETF inception). An earlier version of this factor was built
+from yfinance's free fundamentals endpoint, which exposed at most ~5 years of annual and
+~5 quarters of quarterly statements per company — a hard limitation of that data source
+that bounded GP to roughly 2021-present. That limitation no longer applies after the
+EDGAR XBRL migration.
+
+The migration surfaced real data-quality edge cases, now handled explicitly rather than
+silently: **58 tickers are excluded** from the GP universe with documented per-ticker
+reasoning (`factor_engine/gp_exclusions.py`) — 35 REITs (their rental-income business
+model has no COGS-equivalent concept for Novy-Marx GP to measure at all, the same reason
+financials are conventionally excluded from academic profitability factors), 18 tickers
+with a pervasive company-specific tag mismatch (e.g. health insurers, whose real cost
+driver is claims/medical benefits paid under an entirely different XBRL concept than
+standard "cost of revenue" tags), and 5 tickers with an unexplained raw-value magnitude
+mismatch versus the prior yfinance-derived data. Individual corrupted observations (e.g.
+one placeholder shell-company balance-sheet value from a merger-era filing) are filtered
+at the single-quarter level rather than excluding the whole ticker, preserving otherwise-good
+history. Every observation also carries a `source` provenance tag — `reported` (directly
+tagged), `derived_from_ytd_subtraction` (Q4 is rarely tagged discretely; derived as exact
+arithmetic from the fiscal-year and nine-month-YTD facts most filers do tag), or
+`estimated_from_margin` (COGS backed out from the company's own historical gross margin,
+last resort) — so any future data-quality question can be isolated to a specific tier
+rather than guessed at.
 
 **Regression specification**
 For a return series *r* and risk-free rate *Rf*:
@@ -138,9 +158,10 @@ For a return series *r* and risk-free rate *Rf*:
 > excess_return = α + β_mkt × (Mkt − Rf) + β_smb × SMB + β_hml × HML + β_mom × MOM + β_gp × GP + ε
 
 Estimated via OLS. The intercept α is Jensen's alpha — the average daily excess return
-after accounting for factor exposures. Alpha is annualised as α × 252. (Portfolio-level
-and fund-skill regressions substitute β_rmw × RMW + β_cma × CMA into this specification
-in place of — or alongside — β_gp × GP, per the FF4→FF7 note above.)
+after accounting for factor exposures. Alpha is annualised as α × 252. (Module 2's
+portfolio-level regressions substitute β_rmw × RMW + β_cma × CMA into this specification
+alongside β_gp × GP, per the FF4→FF7 note above; Module 3/4 fund-skill regressions omit
+all three.)
 """)
 
 # ---------------------------------------------------------------------------
@@ -174,11 +195,9 @@ weighted beta contribution (weight × beta) for each. The sum of weighted betas
 approximates — but won't exactly match — the Tier 1 betas, because independent
 regressions use the same factor matrix but different residual structures.
 
-Because GP's own coverage only starts ~2021 (see the FF4→FF7 note above) while the
-portfolio's default analysis window already begins 2021-01-04, this doesn't require any
-special handling here — GP simply sits inside the existing window rather than truncating
-it, unlike fund skill scoring (Module 3 below), where 13F history commonly predates 2021
-by many years.
+GP's EDGAR XBRL coverage (2013–2026, see the FF4→FF7 note above) fully spans the
+portfolio's default analysis window (beginning 2021-01-04), so no truncation or special
+handling is needed here.
 
 **VXUS treatment**
 VXUS is an international ETF. Strictly, it should be regressed against international
@@ -192,11 +211,13 @@ The stress tests apply the portfolio's current 7-factor betas to actual factor r
 that occurred during three historical episodes — sourced from Ken French's official
 daily series for market/SMB/HML/RMW/CMA/MOM, so pre-2013 scenarios (e.g. the 2008
 financial crisis) are fully covered despite the MTUM ETF proxy not existing that far
-back. GP is the exception: its own ~2021-present coverage structurally cannot reach the
-2008 or 2020 scenarios, and even 2022 is marginal. Rather than silently treating GP's
-missing exposure as zero, each scenario's GP contribution is computed only when GP has
-data for every trading day in that window — otherwise it's flagged unavailable and
-omitted from that scenario's estimate. The daily estimated return is:
+back. GP is the exception: even with its EDGAR XBRL coverage now spanning 2013–2026 (see
+the FF4→FF7 note above), that still doesn't reach the 2008 or 2020 scenarios, both of
+which predate it — 2022 is now solidly covered, no longer marginal. Rather than silently
+treating GP's missing exposure as zero for the scenarios it can't reach, each scenario's
+GP contribution is computed only when GP has data for every trading day in that window —
+otherwise it's flagged unavailable and omitted from that scenario's estimate. The daily
+estimated return is:
 
 > r̂ₜ = Rfₜ + α_daily + β_mkt × Mkt_excessₜ + β_smb × SMBₜ + β_hml × HMLₜ + β_rmw × RMWₜ + β_cma × CMAₜ + β_mom × MOMₜ [+ β_gp × GPₜ, when available]
 
@@ -252,37 +273,29 @@ For each fund, quarterly portfolio returns are reconstructed using the Grinblatt
 (which is the quarter *end*), assume those positions were held at the start of the quarter,
 and compute their buy-and-hold return over the quarter using prices at both ends.
 
-A fund's quarterly excess return series is then regressed in **two tiers**, because GP's
-~2021-present coverage (see the FF4→FF7 note in Module 1) is materially shorter than a
-typical fund's 13F history, which often extends back to 2013:
+A fund's quarterly excess return series is then regressed against **FF4** (market, size,
+value, momentum), run over the fund's full available quarterly history:
 
-*Primary tier* — market, SMB, HML, RMW, CMA, MOM, run over the fund's **full** available
-quarterly history (unchanged sample depth vs. the prior FF4 spec):
-
-> r_fund_q − Rf_q = α_q + β_mkt × Mkt_q + β_smb × SMB_q + β_hml × HML_q + β_rmw × RMW_q + β_cma × CMA_q + β_mom × MOM_q + ε_q
-
-*Secondary tier* — the same six factors plus GP, run **only** over the subset of quarters
-that fall inside GP's coverage window. Only β_gp and its t-statistic are taken from this
-fit; its alpha and other six betas are discarded in favor of the primary tier's full-sample
-estimates. A fund needs at least 9 quarters inside GP's coverage window for β_gp to be
-computed at all — otherwise it's shown as unavailable, not defaulted to zero.
+> r_fund_q − Rf_q = α_q + β_mkt × Mkt_q + β_smb × SMB_q + β_hml × HML_q + β_mom × MOM_q + ε_q
 
 Momentum matters most for growth/momentum-tilted managers: a fund that structurally holds
 recent winners will show inflated alpha under a model missing that factor, because that
-return component has nowhere to go but the residual. The same logic extends to RMW/CMA
-for funds with strong profitability or capital-discipline tilts. Explicit betas give a
+return component has nowhere to go but the residual. An explicit momentum beta gives a
 cleaner separation of stock-picking skill from factor beta.
 
 The intercept α is the quarterly alpha — the return attributable to stock selection after
 removing factor beta. It is annualised as (1 + α_q)⁴ − 1 for display.
 
-**β_gp is inherently less reliable than the other six betas** — it's estimated over a
-much shorter window (a few years vs. potentially a decade-plus for the primary tier), so
-treat it as a directional read on recent positioning, not a robust historical estimate.
-Always display it labeled "Gross Profitability (2021-present)" alongside however many
-quarters actually fed it.
+**Why FF4 here and FF7 in Module 2** — this module previously ran the fuller FF7 spec
+(adding RMW, CMA, and the platform's proprietary Gross Profitability factor), matching
+Module 2's portfolio-level model. That was reverted after a backtest investigation — see
+"Signal Validation" below for the full account — found no measurable predictive benefit
+from the three additional factors on this module's short, per-fund quarterly panels (12-40
+quarters per fund), while Module 2 analyzes one portfolio's long daily return history and
+doesn't share that same data constraint. FF4 here is a parsimony choice, not a claim that
+RMW/CMA/GP are unreliable in general — they remain the production model for Module 2.
 
-Skill thresholds (primary tier):
+Skill thresholds:
 - **Reliable** (≥12 quarters): sufficient history for OLS to be meaningful
 - **Scored** (≥8 quarters): enough data to estimate but wide confidence intervals
 - α is a **directional signal, not a significance test**. The t-statistic and
@@ -402,90 +415,90 @@ significance at the ~95% confidence level, and a t-stat above 3.0 clears the ~99
 confidence threshold — the conventional bars for concluding a result is unlikely to be
 pure chance rather than a hard cutoff for "the signal works."
 
-**Results across three horizons (FF7 fund skill model, 60-fund universe, current):**
+**Results across three horizons (FF4 fund skill model, 60-fund universe, current production
+configuration):**
 
 | Horizon | Universe | IC | t-stat | Hit rate | Significant? |
 |---------|----------|-----|--------|----------|---------------|
-| 1-month | full | +0.007 | 1.29 | 64% | No |
-| 1-month | watchlist | +0.006 | 1.05 | 64% | No |
-| 3-month | full | +0.008 | 1.51 | 57% | No |
-| 3-month | watchlist | +0.007 | 1.41 | 53% | No |
-| 6-month | full | +0.005 | 0.96 | 56% | No |
-| 6-month | watchlist | +0.005 | 0.92 | 60% | No |
+| 1-month | full | +0.008 | 1.42 | 66% | No |
+| 1-month | watchlist | +0.006 | 1.19 | 62% | No |
+| 3-month | full | +0.008 | 1.52 | 57% | No |
+| 3-month | watchlist | +0.007 | 1.52 | 53% | No |
+| 6-month | full | +0.005 | 0.98 | 56% | No |
+| 6-month | watchlist | +0.006 | 1.11 | 56% | No |
 
-Hit rate is the percentage of quarters in which the signal correctly predicted the
-direction (sign) of the forward return. None of the six (horizon × universe) combinations
-clear the ~95% confidence bar (t-stat ≈ 2.0). The 3-month horizon is closest, but note the
-pattern is no longer monotonic with horizon the way it was under FF4 — predictive power
-peaks at 3-month and weakens again by 6-month rather than strengthening throughout. That
-inversion is itself a symptom of the alpha-estimate noise discussed below, not a new signal
-about how quickly institutional conviction plays out in price.
+Hit rate is the percentage of quarters in which the signal correctly predicted the direction
+(sign) of the forward return. None of the six (horizon × universe) combinations clear the
+~95% confidence bar (t-stat ≈ 2.0) at present.
 
-**FF7 overfitting hypothesis — tested directly, not confirmed.** This section documents that
-test end to end, including the result that didn't support the hypothesis, because that's a
-more honest account of the platform's research process than reporting only the improvements.
+**An honest investigation: what happened to the +0.061 result, and why it isn't the
+benchmark to chase.** This platform previously reported a much stronger number — 3-month IC
++0.061 (t-stat 3.24, 99% significant) — and spent considerable effort trying to recover it
+after later changes appeared to erode it. That investigation ultimately traced the *original*
+number to a data bug, not a methodology regression. The full account is below, including the
+steps that didn't pan out, because that's a more honest record of the platform's research
+process than reporting only the parts that resolved cleanly.
 
-*1. The original finding.* Upgrading the fund skill regression from FF4 to FF7 (adding RMW,
-CMA, and a proprietary Gross Profitability factor) produced more theoretically grounded skill
-estimates — independently validated by AQR's significant RMW/momentum loadings (see Module 1)
-— but on the original 41-fund universe it produced a materially **weaker** backtested signal:
-3-month IC fell from +0.061 (t-stat 3.24, 99% significant) under FF4 to +0.007 (t-stat 1.32,
-not significant) under FF7. A real degradation, not sampling noise.
+*1. The original finding.* On the original 41-fund universe under FF4 (market, size, value,
+momentum), the signal backtested at 3-month IC +0.061, t-stat 3.24 — a strong, statistically
+significant result across all horizons. This became the benchmark every subsequent change was
+measured against.
 
-*2. The hypothesis.* With only 12–40 quarters of filing history per fund, adding three more
-factors to the regression worsens the data-to-parameter ratio, increasing the risk that the
-skill estimates fit noise in the fund's return history rather than capturing genuine
-stock-picking ability — a standard bias-variance tradeoff. Under this hypothesis, more
-quarters per fund should recover most of the lost signal.
+*2. The investigation.* Two later changes both failed to reproduce or improve on +0.061.
+Upgrading the skill regression to FF7 (adding RMW, CMA, and a proprietary Gross Profitability
+factor) dropped 3-month IC to +0.007 (t=1.32) on the same 41-fund universe. Expanding the
+fund universe from 41 to 60 (adding sovereign wealth funds, insurance portfolios, endowments,
+and long-tenured asset managers — see Module 3) left IC flat at +0.008 regardless of factor
+model. A controlled isolation test — three separate backtests, each adding exactly one of
+RMW, CMA, or GP to FF4 — found all three degraded IC to the same ~0.0075, ruling out any
+single factor's data quality or construction as the cause. A follow-up test restricting the
+60-fund universe back down to (approximately) the original 41 funds, still under FF4, *also*
+failed to reproduce +0.061 (it came back at +0.006, t=1.20) — ruling out fund-universe
+composition as the cause too. Neither of the two most obvious explanations held up.
 
-*3. The test.* The fund universe was expanded from 41 to 60 funds, specifically adding
-institutions with long, clean filing histories that a pure hedge-fund universe lacks:
-sovereign wealth funds (Norges Bank, Temasek), insurance portfolios (Berkshire, Markel,
-Fairfax, Loews), university endowments (Harvard, UTIMCO), and eleven long-tenured asset
-managers (Wellington, Tweedy Browne, Baron, Harris Associates, Davis Advisors, Duquesne,
-Royce, Elliott, Ruane Cunniff, Capital World, T. Rowe Price) — see Module 3 for the full
-bucket breakdown. If the overfitting hypothesis were correct, the added quarters of history
-should measurably recover 3-month IC toward the FF4 baseline.
+*3. The root cause.* With both hypotheses ruled out, the next step was a git history review:
+find the commit where +0.061 was originally measured, and diff everything that changed in the
+data pipeline since. `convergence.py`, `signal.py`, and `backtest.py` — the actual signal
+computation — were unchanged. But `smart_money/prices.py` had picked up a fix, made in the
+same commit as the fund-universe expansion, for dual-class tickers: OpenFIGI/Bloomberg-style
+slash notation (`BRK/A`, `BRK/B`, `BF/A`, `BF/B`) was being passed straight to yfinance, which
+requires hyphens (`BRK-A`, `BRK-B`) instead. Before the fix, any position in one of these
+tickers silently failed to fetch a price.
 
-*4. Methodology verification.* Before trusting a null result, the skill-weighting
-implementation was checked directly rather than assumed correct: `convergence.py`'s
-`_skill_weight()` applies the documented weight tiers exactly as specified (unscored bucket
-weights, the ≥12-quarter reliability gate, the α-based clamp for scored funds), and all 47
-funds that received a skill score also have `n_quarters_gp` populated — the Gross
-Profitability factor's shorter coverage window is not silently dropping funds from the
-regression. `ConvergenceScore` and `FinalSignal` were also rebuilt from scratch (`--force`)
-across all 51 quarters to rule out stale pre-expansion data. No implementation bug was found.
+*4. Why this matters.* Berkshire Hathaway and Brown-Forman are exactly the kind of
+widely-held, long-duration value/quality positions this platform's fund universe is built
+around. Checking actual holdings data: 63 distinct (ticker, fund) pairs across at least 15 of
+the original 41 funds hold one of these four tickers — including Dodge & Cox, First Eagle,
+Southeastern Asset Management, Yacktman, Horizon Kinetics, Coatue, Maverick, Two Sigma,
+Pershing Square, Greenlight, AQR, Acadian, D.E. Shaw, Renaissance, and PDT Partners. For any
+quarter one of these funds held a dual-class position, the return reconstruction either
+silently dropped below the 80% coverage gate (excluding that quarter from the regression
+entirely) or produced a quarterly return missing that position's contribution outright.
 
-*5. The actual result.* 3-month IC on the full universe moved from +0.007 (t=1.32) to
-+0.008 (t=1.51) — statistically and practically flat. **The overfitting hypothesis is not
-confirmed.** More quarters of fund history did not recover the FF4-era signal.
+*5. The honest conclusion.* The original +0.061 was very likely inflated by this silent data
+incompleteness — not a fair target for later changes to be judged against. On the current,
+corrected, complete data, FF4 and FF7 backtest as **statistically indistinguishable** from
+each other (~0.008 IC either way). That is a legitimate, if less exciting, empirical result:
+neither the FF4→FF7 upgrade nor the 41→60 fund expansion actually broke anything — they were
+compared against a number that shouldn't have been trusted as a baseline in the first place.
 
-*6. Why.* Of the 47 funds that received a skill score, 39 have an alpha t-stat below 1.5 —
-statistically indistinguishable from zero — and the median alpha across all scored funds is
-+0.22% annualized, effectively nothing. Most of the newly added long-tenured institutions are
-large, broadly diversified allocators (sovereign wealth funds, insurance float portfolios,
-endowments) that behave like closet indexers with little detectable stock-picking skill under
-any factor model. Their skill weights cluster near the neutral 1.0 baseline regardless of how
-many quarters of history back the estimate, so adding them supplied statistical depth without
-supplying signal. The bias-variance story may still be real for individual funds, but fund
-*count* alone was not the lever that mattered here — fund *skill dispersion* is.
+*6. The final architecture decision.* Module 3/4 (fund skill scoring and the convergence
+signal) uses **FF4**. This is a parsimony decision, not a superiority claim — on the
+corrected data, FF7's three additional factors earn no measurable improvement in this
+module's predictive power, so the simpler, more interpretable model is preferred by default.
+If future evidence shows RMW, CMA, or GP add real value here, that would need fresh validation
+before changing this again — see CLAUDE.md for the explicit warning against casually
+re-upgrading this module without re-running the isolated single-factor backtest diagnostic
+that was built for exactly this purpose.
 
-*7. Next step.* This points toward FF4 being closer to the right complexity for **skill
-scoring** specifically, independent of universe size, rather than FF7's added factors being
-recoverable with more data. The next test is running FF4 skill scoring against the same
-60-fund universe as a clean comparison point. If FF4/60-funds outperforms FF7/60-funds by a
-similar margin to FF4/41-funds vs FF7/41-funds, that would support reverting the
-skill-scoring pipeline (Module 3/4) to FF4 specifically, while retaining FF7 for portfolio-level
-risk characterization (Module 2), where more factors describe exposure rather than trying to
-isolate a small alpha residual from a limited sample.
-
-This builds on the prior improvement from expanding to a **41-fund universe** (which added
-three fundamental value managers — Dodge & Cox, Yacktman Asset Management, and First Eagle
-Investment Management — moving 3-month IC from +0.041 to +0.052 under FF3/FF4). The FF4
-upgrade itself moved 3-month IC from +0.052 to +0.061 and its t-stat from 2.89 to 3.24. FF7
-remains the only factor-model change in this project to *reduce* backtest performance rather
-than improve it, and the 60-fund expansion is the first universe change that failed to help —
-both are documented above rather than smoothed over.
+*7. Module 2 keeps FF7.* Portfolio-level risk characterization (`factor_engine/portfolio.py`,
+the Factor tab) is architecturally unrelated to Module 3/4 — it analyzes one portfolio's long
+daily return history rather than dozens of funds' short quarterly panels, so it doesn't share
+the same degrees-of-freedom constraint that made FF7 problematic for skill scoring. More
+factors there add genuine risk-decomposition value (AQR independently validates significant
+RMW/momentum loadings — see Module 1) without the same statistical penalty. The platform now
+deliberately runs two different factor-model complexities for two different jobs, rather than
+one unified factor count across the whole system.
 
 **Past performance does not guarantee future results.** These figures are computed over a
 historical sample and reflect the specific universe, weighting scheme, and time period
@@ -569,8 +582,8 @@ st.markdown("""
 | Source | What it provides | Latency |
 |--------|-----------------|---------|
 | SEC EDGAR | 13F-HR quarterly filings | 45 days after quarter end |
-| Ken French Data Library | US FF6 (5-factor + momentum) daily factors for portfolio/skill analysis | Monthly updates |
-| yfinance fundamentals | Financial statements for the proprietary GP factor (~1500 stocks) | ~2021-present only |
+| SEC EDGAR XBRL `companyfacts` | Revenue/COGS/Assets for the proprietary GP factor (~1450 stocks post-exclusions) | 2013–2026 |
+| Ken French Data Library | US FF6 (5-factor + momentum) daily factors for portfolio analysis (Module 2) and FF4 for fund skill scoring (Module 3/4) | Monthly updates |
 | yfinance | Adjusted daily closing prices | Daily (T+0) |
 | OpenFIGI API | CUSIP → ticker resolution | Near real-time |
 | Anthropic Batch API | NLP scoring of 10-Q / 10-K MD&A | Computed at pipeline run |
@@ -602,16 +615,22 @@ spread (no liquid "loser" ETF exists to short). This proxy is used only for indi
 factor profiles; portfolio-level analysis, stress tests, and fund skill scoring all use
 Ken French's official daily momentum series instead.
 
-*GP factor has ~2021-present coverage only.* Unlike the other six factors (full history to
-1927/1963 via Ken French, or 2013 for the MTUM momentum proxy), the proprietary Gross
-Profitability factor is built from yfinance's free fundamentals endpoint, which exposes at
-most ~5 years of annual and ~5 quarters of quarterly financial statements per company — a
-hard limitation of the data source, not a bug. β_gp estimates should be treated as
-directional and recency-focused, not robust multi-decade estimates. Wherever this platform
-shows GP, it's labeled "Gross Profitability (2021-present)." Fund skill scoring handles
-this via a two-tier regression (see Module 3) rather than truncating a fund's full history
-down to GP's shorter window; historical stress tests omit GP's contribution entirely for
-scenarios (2008, 2020) that predate its coverage rather than treating it as zero exposure.
+*GP factor covers 2013–2026, sourced from SEC EDGAR XBRL, with 58 documented exclusions.*
+The proprietary Gross Profitability factor is built from SEC EDGAR's XBRL `companyfacts`
+API (Revenue, COGS, Total Assets), giving it full 2013-present history — matching the
+platform's other 2013-era coverage floors. An earlier version built from yfinance's free
+fundamentals endpoint was bounded to roughly 2021-present by that data source's ~5-year
+statement window; that limitation no longer applies. 58 tickers are excluded with
+documented per-ticker reasoning (`factor_engine/gp_exclusions.py`) — 35 REITs (no
+COGS-equivalent concept exists for a rental-income business model), 18 tickers with a
+pervasive company-specific cost-tag mismatch (e.g. health insurers), and 5 unexplained
+magnitude mismatches — and every remaining observation carries a `source` tag
+(`reported` / `derived_from_ytd_subtraction` / `estimated_from_margin`) recording how it
+was derived. Module 3 fund skill scoring does not use GP at all (see "Signal Validation"
+below for why) — GP remains part of Module 1's individual-holding factor profiles and
+Module 2's portfolio-level analysis. Historical stress tests still omit GP's contribution
+entirely for the 2008 and 2020 scenarios, which predate even its extended coverage,
+rather than treating it as zero exposure.
 
 *Skill scores require 12+ quarters to be reliable.* Below 12 quarters, the OLS alpha
 estimate has wide confidence intervals. Alpha t-statistics and confidence labels are always

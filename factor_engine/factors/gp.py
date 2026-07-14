@@ -77,6 +77,7 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
+from factor_engine.gp_exclusions import EXCLUDED_TICKERS, drop_implausible_observations
 from factor_engine.gp_fundamentals import fetch_universe_fundamentals
 from factor_engine.gp_universe import get_universe_tickers
 
@@ -188,11 +189,15 @@ def _fetch_universe_prices(tickers: list[str], start: str, end: str) -> pd.DataF
 def _build_full_history() -> pd.DataFrame:
     print("  [gp] Stage 1/4: loading stock universe...")
     universe = get_universe_tickers()
-    print(f"  [gp] Universe loaded: {len(universe)} tickers")
+    n_excluded = sum(1 for t in universe if t in EXCLUDED_TICKERS)
+    universe = [t for t in universe if t not in EXCLUDED_TICKERS]
+    print(f"  [gp] Universe loaded: {len(universe)} tickers "
+          f"({n_excluded} excluded — see factor_engine/gp_exclusions.py for documented reasons)")
 
     print(f"  [gp] Stage 2/4: fetching fundamentals for {len(universe)} tickers "
-          f"(first run: ~45-90 min; resumed runs: fast, cached per-ticker)...")
+          f"(cached per-ticker; see gp_fundamentals.py)...")
     fundamentals = fetch_universe_fundamentals(universe)
+    fundamentals = {t: drop_implausible_observations(df) for t, df in fundamentals.items()}
 
     earliest_period_end = min(
         (pd.to_datetime(df["period_end"]).min() for df in fundamentals.values() if not df.empty),

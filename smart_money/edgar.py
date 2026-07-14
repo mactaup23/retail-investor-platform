@@ -19,14 +19,17 @@ on 429 / 503 (up to 3 retries, max 32 s sleep).
 User-Agent
 ----------
 Set EDGAR_USER_AGENT env var to override the default.
+
+HTTP plumbing lives in edgar_client.py (shared with factor_engine's XBRL
+fetches — see that module's docstring) and is re-exported below under this
+module's original names so every existing import in this codebase
+(smart_money/nlp.py, scripts/*) keeps working unchanged.
 """
 
-import os
-import time
 import xml.etree.ElementTree as ET
 from typing import TypedDict
 
-import requests
+from edgar_client import _USER_AGENT, get as _get
 
 # ---------------------------------------------------------------------------
 # Types
@@ -61,45 +64,12 @@ class HoldingRow(TypedDict):
 
 # ---------------------------------------------------------------------------
 # HTTP helpers
+#
+# _USER_AGENT and _get are imported from edgar_client (see module docstring).
 # ---------------------------------------------------------------------------
-
-_USER_AGENT = os.getenv(
-    "EDGAR_USER_AGENT",
-    "RetailInvestorPlatform mac.taupier@gmail.com",
-)
 
 _BASE_SUBMISSIONS = "https://data.sec.gov/submissions"
 _BASE_ARCHIVES    = "https://www.sec.gov/Archives/edgar/data"
-
-_last_request_ts: float = 0.0
-_MIN_GAP = 0.12          # seconds between requests (< 10/sec SEC limit)
-_MAX_RETRIES = 3
-
-
-def _get(url: str, **kwargs) -> requests.Response:
-    """Throttled GET with exponential backoff on 429/503."""
-    global _last_request_ts
-
-    elapsed = time.monotonic() - _last_request_ts
-    if elapsed < _MIN_GAP:
-        time.sleep(_MIN_GAP - elapsed)
-
-    headers = {"User-Agent": _USER_AGENT, "Accept-Encoding": "gzip, deflate"}
-    headers.update(kwargs.pop("headers", {}))
-
-    delay = 1.0
-    for attempt in range(_MAX_RETRIES + 1):
-        _last_request_ts = time.monotonic()
-        resp = requests.get(url, headers=headers, timeout=30, **kwargs)
-        if resp.status_code in (429, 503) and attempt < _MAX_RETRIES:
-            time.sleep(delay)
-            delay = min(delay * 2, 32)
-            continue
-        resp.raise_for_status()
-        return resp
-
-    resp.raise_for_status()  # will raise after exhausting retries
-    return resp              # unreachable; satisfies type checker
 
 
 # ---------------------------------------------------------------------------

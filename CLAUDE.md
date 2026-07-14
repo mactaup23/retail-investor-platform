@@ -53,6 +53,8 @@ Real portfolio: VTI 24.37%, QQQM 11.40%, SCHD 11.78%, VXUS 15.58%, NVDA 2.94%, G
 
 VXUS uses Ken French Global FF3 factors (not US factors, and no regional momentum series exists) — labeled "US FF4 (intl. approx.)" in output. All other holdings use US FF4.
 
+Portfolio-level analysis and stress tests run the full FF7 spec (market, SMB, HML, RMW, CMA, MOM, GP — factor_engine/portfolio.py, dashboard/factor.py), unlike Module 3/4 which uses FF4 (see the FF4-vs-FF7 note under Module 3 below for why the two modules deliberately differ). AQR independently validates this module's RMW/momentum loadings as significant.
+
 Stress test methodology: historical factor shock replay against current betas. This is risk characterization, NOT a backtest. Label accordingly in all output.
 
 ## Module 3 — EDGAR Ingestion and Fund Skill
@@ -70,8 +72,41 @@ CRITICAL DATA FACTS — do not change without understanding why:
 - iXBRL viewer URLs (/ix?doc=...) must be stripped via _unwrap_ix() before fetching raw HTML
 - Namespace detection must handle both informationTable (mixed case) and informationtable (lowercase) across filers and eras
 - Viking Global CIK is 1103804, not 1166928 (which is West Bancorporation — wrong entity caught during verification)
+- Dual-class tickers (BRK/A, BRK/B, BF/A, BF/B, etc.) use OpenFIGI/Bloomberg slash notation in Security.ticker, but yfinance requires hyphens (BRK-A). smart_money/prices.py::_to_yfinance_symbol() translates at the price-fetch boundary — do not pass Security.ticker straight to yfinance. Before this fix existed, positions in these tickers silently failed to fetch a price, which understated or excluded affected funds' quarterly returns without erroring. This is the confirmed root cause of an early backtest figure (3-month IC +0.061, t=3.24, see below) that could not be reproduced after the fix landed — the fix is correct; +0.061 was measured on incomplete data, not a target to chase back.
 
-Fund skill regression is Fama-French-Carhart 4-factor (adds momentum to the historical FF3 spec) — see smart_money/factor_apply.py. Momentum matters most for growth/momentum-tilted managers (e.g. Greenoaks, Altimeter): under FF3 their return from holding recent winners was mis-attributed to alpha; FF4 captures it as beta_mom instead.
+Fund skill regression is FF4 (market, size, value, momentum — Fama-French-Carhart, adds momentum to the historical FF3 spec) — see smart_money/factor_apply.py. Momentum matters most for growth/momentum-tilted managers (e.g. Greenoaks, Altimeter): under FF3 their return from holding recent winners was mis-attributed to alpha; FF4 captures it as beta_mom instead.
+
+**FF4 (Module 3/4) vs FF7 (Module 2) — deliberate split, do not unify without re-validation.**
+Module 3/4 skill scoring ran the fuller FF7 spec (adds RMW, CMA, and the proprietary GP
+factor — see Module 2 below) for a period, then reverted to FF4. The investigation (full
+account in app_pages/about.py's "Signal Validation" section):
+1. FF4 on the original 41-fund universe backtested at 3-month IC +0.061 (t=3.24) — the
+   number every later change was compared against.
+2. Neither the FF4→FF7 upgrade nor the 41→60 fund-universe expansion reproduced or improved
+   on it (both landed around IC +0.008 regardless of factor model).
+3. A controlled isolation test — three backtests, each adding exactly one of RMW/CMA/GP to
+   FF4 (smart_money/factor_apply_diagnostic.py + scripts/run_ff4_plus_one_diagnostic.py) —
+   found all three degraded IC to the same ~0.0075, ruling out any single factor's data
+   quality/construction as the cause.
+4. A follow-up test restricting the 60-fund universe back to the original 41
+   (scripts/run_41fund_ff4_diagnostic.py) also failed to reproduce +0.061 (+0.006, t=1.20),
+   ruling out fund-universe composition too.
+5. Git history review found the real cause: +0.061 was measured before the dual-class-ticker
+   price-fetch fix above existed. 63 (ticker, fund) pairs across >=15 of the original 41
+   funds hold BRK/A, BRK/B, BF/A, or BF/B — including Dodge & Cox, First Eagle, Southeastern,
+   Yacktman, Horizon Kinetics, Coatue, Maverick, Two Sigma, Pershing Square, Greenlight, AQR,
+   Acadian, D.E. Shaw, Renaissance, PDT Partners. Before the fix, those positions silently
+   failed to fetch a price, corrupting affected funds' quarterly return reconstruction.
+
+Conclusion: +0.061 was likely inflated by silent data incompleteness, not a fair baseline.
+On corrected data, FF4 and FF7 are statistically indistinguishable for Module 3/4 (~0.008 IC
+either way) — **FF4 is kept for parsimony, not proven superiority.** Module 2 keeps FF7
+(portfolio-level risk characterization over one long daily return history has no comparable
+per-fund degrees-of-freedom constraint, and AQR independently validates significant
+RMW/momentum loadings there — see Module 2 below). **Do not casually re-upgrade Module 3/4
+back to FF7** without re-running the isolated single-factor backtest diagnostic — the
+evidence that FF4 is the right choice here is specific and already established; reintroducing
+RMW/CMA/GP without fresh evidence would repeat a change already shown not to earn its keep.
 
 Skill score thresholds: MIN_QUARTERS_REG=8, MIN_QUARTERS_RELIABLE=12. Alpha is a directional decomposition signal NOT a significance test. Always show t-stat and confidence_label alongside alpha.
 
@@ -139,7 +174,7 @@ TaxLot
 4. Delisted ticker handler improvements
 5. Quarterly pipeline automation (Mac launchd/cron)
 6. Full CIK re-verification pass across all 38 funds
-7. Fund universe expansion — long-only institutional managers (Norges Bank, Capital Group, T. Rowe Price, Wellington, endowments)
+7. Completed — fund universe expanded from 41 to 60 (sovereign wealth, insurance, university endowments, 11 long-tenured RIAs including Norges Bank, Capital Group, T. Rowe Price, Wellington)
 8. Additional signal sources — Schedule 13D/13G, Form 4 insider transactions, active ETF daily holdings
 9. Completed — replaced with Ariel Investments (CIK 936753)
 10. Tax-lot engine enhancements — cross-account wash-sale detection, NYC state/city tax rates, tax-efficient rebalancing optimization

@@ -41,6 +41,8 @@ from pathlib import Path
 import anthropic
 from bs4 import BeautifulSoup
 
+from edgar_client import ticker_to_cik
+
 from .edgar import _BASE_ARCHIVES, _BASE_SUBMISSIONS, _get
 from .models import DB_PATH, NLPCache, init_db
 
@@ -68,25 +70,11 @@ DIMENSION_WEIGHTS: dict[str, float] = {
 
 # ---------------------------------------------------------------------------
 # Ticker → CIK lookup
+#
+# ticker_to_cik is imported from edgar_client (see module docstring there) —
+# it's shared with factor_engine's XBRL fetches, both keyed off the same SEC
+# company_tickers.json bulk file.
 # ---------------------------------------------------------------------------
-
-_COMPANY_TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
-_ticker_cik_map: dict[str, str] = {}
-
-
-def _load_ticker_cik_map() -> dict[str, str]:
-    """Fetch and cache the SEC company_tickers.json once per process."""
-    if _ticker_cik_map:
-        return _ticker_cik_map
-    data = _get(_COMPANY_TICKERS_URL).json()
-    for entry in data.values():
-        _ticker_cik_map[entry["ticker"].upper()] = str(entry["cik_str"]).zfill(10)
-    return _ticker_cik_map
-
-
-def ticker_to_cik(ticker: str) -> str | None:
-    """Return the zero-padded 10-digit CIK for a ticker, or None if not found."""
-    return _load_ticker_cik_map().get(ticker.upper())
 
 
 # ---------------------------------------------------------------------------
