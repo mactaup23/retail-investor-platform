@@ -9,9 +9,9 @@ Public functions:
 Function names kept as "_ff3_" for continuity with existing dashboard callers;
 both now run the full 7-factor model: Fama-French 5 (market, size, value,
 profitability, investment) + Carhart momentum + this platform's proprietary
-GP (Gross Profitability) factor.  GP has materially shorter history
-(~2021-present, see factor_engine/factors/gp.py) than the other six factors
-— label any GP-specific display "Gross Profitability (2021-present)".
+GP (Gross Profitability) factor.  GP now has full history back to 2013 (EDGAR
+XBRL-sourced, see factor_engine/factors/gp.py) matching the platform's other
+six factors — label any GP-specific display "Gross Profitability (2013-present)".
 
 portfolio_ff3_betas() is a cache_resource singleton so it runs exactly once per
 server process regardless of how many sessions are open.  pre-warming it in
@@ -104,11 +104,9 @@ def ticker_ff3_profile(ticker: str) -> dict | None:
     subsequent calls are instantaneous.
 
     Returns None gracefully for: new IPOs, delisted tickers, < 60 trading days
-    of overlapping data, or any other failure.  Because GP's own coverage is
-    bounded to ~2021-present (materially shorter than the other six factors),
-    the effective sample here is capped at whatever the dropna() below leaves
-    — for the default _ANALYSIS_START of 2021-01-04 this is a minor trim, not
-    a structural gap.
+    of overlapping data, or any other failure.  GP's own coverage now spans
+    2013-present (EDGAR XBRL-sourced), fully covering the default
+    _ANALYSIS_START of 2021-01-04 — no trim from GP specifically.
     """
     try:
         from factor_engine.french_data import get_ff7_daily

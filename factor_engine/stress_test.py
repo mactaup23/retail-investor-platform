@@ -40,10 +40,10 @@ scenario, and there is no ETF proxy at all for RMW/CMA.
 GP coverage gap — by design, not a bug
 -----------------------------------------
 GP (this platform's proprietary Gross Profitability factor,
-factor_engine/factors/gp.py) has only ~2021-present coverage, a hard
-limitation of the free yfinance fundamentals data it's built from — it
-structurally CANNOT cover the 2008 or 2020 scenarios below, and even the 2022
-scenario is marginal.  Each scenario's GP contribution is computed only if
+factor_engine/factors/gp.py) has 2013-present coverage (SEC EDGAR
+XBRL-sourced) — it structurally CANNOT cover the 2008 or 2020 scenarios
+below, both of which predate it, though 2022 is now solidly covered, no
+longer marginal.  Each scenario's GP contribution is computed only if
 GP has data for every trading day in that scenario's window; otherwise
 gp_contrib is None and gp_available is False in the result dict, rather than
 silently treating the missing exposure as zero.  RMW/CMA have no such gap and
@@ -177,8 +177,8 @@ def run_stress_tests(
     beta_market, beta_smb, beta_hml, beta_rmw, beta_cma, beta_mom, beta_gp : float
         Portfolio-level factor loadings from the headline regression.
         beta_gp's contribution will be None for scenarios predating GP's
-        ~2021-present coverage (2008, 2020; likely also 2022) — see module
-        docstring. Pass 0.0 if the caller doesn't have a beta_gp estimate.
+        2013-present coverage (2008, 2020) — see module docstring. Pass 0.0
+        if the caller doesn't have a beta_gp estimate.
     alpha_daily : float
         Daily intercept from the headline regression.
 

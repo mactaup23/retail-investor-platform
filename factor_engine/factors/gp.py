@@ -45,18 +45,17 @@ Rebalance: quarterly (calendar quarter boundaries).  At each rebalance date,
 Portfolio: equal-weighted, long top quintile / short bottom quintile by
            GP_ratio, held until the next rebalance.
 
-Historical coverage — hard limitation, not a bug
---------------------------------------------------
-yfinance's free fundamentals endpoint exposes at most ~5 years of annual
-statements and ~5 quarters of quarterly statements per ticker (verified
-empirically; see factor_engine/gp_fundamentals.py docstring).  This bounds
-GP_FACTOR coverage to roughly 2021-present — meaningfully shorter than the
-Ken French RMW/CMA series (full history to 1963) or the ETF-proxy MOM series
-(MTUM inception 2013).  GP factor loadings are inherently less statistically
-reliable than RMW/CMA/MOM loadings estimated over their much longer windows.
-Label this factor "Gross Profitability (2021-present)" wherever displayed —
-never present it alongside RMW/CMA/MOM without that caveat.  Consumers that
-need a coverage boundary should call get_gp_coverage_start().
+Historical coverage
+--------------------
+GP is built from SEC EDGAR's XBRL companyfacts API (see
+factor_engine/gp_fundamentals.py docstring), giving it full 2013-present
+history — matching the platform's other 2013-era coverage floors (13F XML
+cutoff, MTUM ETF inception). An earlier version built from yfinance's free
+fundamentals endpoint (~5 years of annual / ~5 quarters of quarterly
+statements per ticker) was bounded to roughly 2021-present; that limitation
+no longer applies. Label this factor "Gross Profitability (2013-present)"
+wherever displayed. Consumers that need the exact realized coverage
+boundary should call get_gp_coverage_start() rather than hardcoding a year.
 
 Regression usage
 -----------------
@@ -277,7 +276,7 @@ def build_gp_factor(start: str, end: str, refresh: bool = False) -> pd.DataFrame
         short_return — equal-weighted daily log return of the bottom-quintile basket
         gp           — long_return - short_return (the GP factor)
 
-    Coverage is bounded to roughly 2021-present (see module docstring) —
+    Coverage is bounded to roughly 2013-present (see module docstring) —
     requesting an earlier start simply yields fewer rows, not an error.
     Full history is built once and cached to data/gp/gp_factor_daily.csv;
     pass refresh=True to force a full rebuild (re-fetches fundamentals for

@@ -46,8 +46,8 @@ REINVESTOR_CANDIDATES = ["AMZN", "NVDA"]
 
 ALL_CANDIDATES = QUALITY_CANDIDATES + COMMODITY_CANDIDATES + REINVESTOR_CANDIDATES
 
-# Analysis window: must sit inside GP's own coverage (~2021-present) — a wider
-# window would just get trimmed by compute_factor_loadings' dropna() anyway.
+# Analysis window: GP now covers 2013-present, so this window is a deliberately
+# recent slice for this sanity check, not a coverage constraint.
 START = "2022-01-01"
 END   = "2024-12-31"
 
@@ -128,9 +128,12 @@ def main():
     if failures:
         print(f"\n{len(failures)} candidate(s) failed the directional check: {failures}")
         print("This is a directional illustration over one sample window, not a strict")
-        print("pass/fail gate — beta_gp can be noisy given GP's short (~2021-present)")
-        print("history. The primary correctness check is the synthetic OLS-recovery")
-        print("test (tests/test_hml_factor.py::test_compute_factor_loadings_recovers_true_betas).")
+        print("pass/fail gate. GP now has full 2013-present history, so short coverage")
+        print("isn't the explanation for a failure here — the Novy-Marx GP/Assets ratio")
+        print("rewards asset turnover as much as pure margin and doesn't control for size,")
+        print("so it won't cleanly separate every intuitive case. The primary correctness")
+        print("check is the synthetic OLS-recovery test")
+        print("(tests/test_hml_factor.py::test_compute_factor_loadings_recovers_true_betas).")
     else:
         print("\nAll candidates matched their expected directional sign.")
 

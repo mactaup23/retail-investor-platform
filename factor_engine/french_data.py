@@ -11,15 +11,16 @@ official series uses actual CRSP stock returns and proper B/M breakpoints —
 strictly more accurate than the IWM/IWB/IWD/IWF/IWN/IWO/MTUM proxies.
 
 GP (Gross Profitability) has no Ken French analog — it's a proprietary factor
-constructed in factor_engine/factors/gp.py from ~1500 stocks' financial
-statement data, with materially shorter history (~2021-present) than the
-Ken French series (full history to 1963).  get_ff7_daily() left-joins it onto
-the full ff6 panel so pre-2021 mkt/smb/hml/rmw/cma/mom history is never
-truncated — the gp column is simply NaN before GP's actual coverage starts.
-Callers that run a single joint regression across the full panel must dropna
-consistently, or use the two-tier approach documented in
-smart_money/factor_apply.py if they need the other six factors' full history
-preserved.
+constructed in factor_engine/factors/gp.py from SEC EDGAR XBRL data (~1450
+stocks post-exclusions), with 2013-present history — still short of the
+Ken French series (full history to 1963), but no longer bounded to
+~2021-present as an earlier yfinance-sourced version was.  get_ff7_daily()
+left-joins it onto the full ff6 panel so pre-2013 mkt/smb/hml/rmw/cma/mom
+history is never truncated — the gp column is simply NaN before GP's actual
+coverage starts. Callers that run a single joint regression across the full
+panel must dropna consistently, or use get_ff6_daily() (which excludes GP
+entirely) if they need the other six factors' full history preserved
+without any GP-driven truncation.
 
 VXUS methodology note
 ---------------------
@@ -281,7 +282,7 @@ def get_ff7_daily(start: str, end: str) -> pd.DataFrame:
     mkt_excess, smb, hml, rmw, cma, mom, gp, rf
 
     GP is left-joined onto the full FF6 history, so requesting a [start, end]
-    range that predates GP's own coverage (~2021-present, see
+    range that predates GP's own coverage (2013-present, see
     factor_engine/factors/gp.py) does NOT truncate the other six factors —
     it simply returns NaN in the gp column for those dates. Callers running a
     single joint regression across the full panel must dropna (which will

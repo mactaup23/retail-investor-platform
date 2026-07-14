@@ -22,17 +22,16 @@ Factor data source: official Ken French daily series for mkt/smb/hml/rmw/cma/mom
 maximum accuracy, plus this platform's proprietary GP (Gross Profitability)
 factor (factor_engine/factors/gp.py) — there is no Ken French analog for GP.
 
-GP coverage caveat: GP's own history is bounded to roughly 2021-present
-(vs. full history for the other six factors), materially shorter than this
-module's default analysis window start (2021-01-04) — so in practice the
-window already sits inside GP's coverage and no special handling is needed
-here beyond the existing dropna() in run_headline_regression()/
-run_per_holding_regressions(), which naturally trims to whatever rows have
-data for all seven factors.  Callers requesting an earlier start should
+GP coverage note: GP's own history now spans 2013-present (EDGAR
+XBRL-sourced), fully covering this module's default analysis window start
+(2021-01-04) — no special handling is needed here beyond the existing
+dropna() in run_headline_regression()/run_per_holding_regressions(), which
+naturally trims to whatever rows have
+data for all seven factors.  Callers requesting a start before 2013 should
 expect the effective sample to begin wherever GP coverage actually starts,
-not the requested date — this is different from smart_money/factor_apply.py,
-which needs a two-tier regression because fund histories there commonly
-predate 2021 by many years (see that module's docstring).
+not the requested date. (smart_money/factor_apply.py — Module 3/4 fund skill
+scoring — uses FF4 only and doesn't include GP at all; see that module's
+docstring for why.)
 """
 
 import numpy as np
@@ -271,7 +270,7 @@ def generate_plain_english_summary(headline: dict, per_holding: list[dict]) -> s
         "",
         "Gross profitability tilt (GP, proprietary):",
         f"  {_interpret_beta_gp(bgp)}.  Driven by: {gp_drivers}.",
-        f"  Note: GP has ~2021-present coverage only, shorter than the other six factors — treat this loading as more directional, less statistically established.",
+        f"  Note: GP has 2013-present coverage, sourced from SEC EDGAR XBRL, matching the other six factors' history.",
     ]
     if value_holders and growth_holders:
         lines.append(

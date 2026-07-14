@@ -1195,12 +1195,12 @@ def _render_factor_tab(ticker: str) -> None:
     c7.metric(
         "GP β", f"{bgp:+.3f}",
         help=(
-            "Gross Profitability (2021-present) — this platform's proprietary factor, "
+            "Gross Profitability (2013-present) — this platform's proprietary factor, "
             "(Revenue-COGS)/Assets, long high-margin businesses / short low-margin businesses. "
             "Positive values mean the stock behaves like high-gross-margin businesses. "
             "Chosen over FCF yield specifically so heavy reinvestors (e.g. AMZN, NVDA) aren't "
-            "penalized for capital intensity. Coverage is ~2021-present only — materially "
-            "shorter history than the other six factors, so treat this beta as directional."
+            "penalized for capital intensity. Sourced from SEC EDGAR XBRL, matching the "
+            "other six factors' history."
         ),
     )
 
@@ -1236,7 +1236,7 @@ def _render_factor_tab(ticker: str) -> None:
     st.caption(
         f"{profile['start']} → {profile['end']} · "
         f"7-factor model: Ken French US market/SMB/HML/RMW/CMA/MOM + proprietary "
-        f"Gross Profitability (2021–present)"
+        f"Gross Profitability (2013–present)"
     )
 
     # --- Plain-English interpretation ---
@@ -1247,7 +1247,7 @@ def _render_factor_tab(ticker: str) -> None:
     st.markdown(f"- **Profitability (RMW):** {_interpret_beta_rmw(brmw)}")
     st.markdown(f"- **Investment (CMA):** {_interpret_beta_cma(bcma)}")
     st.markdown(f"- **Momentum (MOM):** {_interpret_beta_mom(bmom)}")
-    st.markdown(f"- **Gross Profitability (GP, 2021–present):** {_interpret_beta_gp(bgp)}")
+    st.markdown(f"- **Gross Profitability (GP, 2013–present):** {_interpret_beta_gp(bgp)}")
     st.markdown(
         f"- **Model fit:** the 7-factor model explains **{r2 * 100:.1f}%** of this stock's daily "
         f"return variance. "
@@ -1337,7 +1337,7 @@ def _render_factor_tab(ticker: str) -> None:
             "":           _delta_icon(new_mom - pmom),
         },
         {
-            "Factor":     "GP β (Gross Profitability, 2021–present)",
+            "Factor":     "GP β (Gross Profitability, 2013–present)",
             "This Stock": f"{bgp:+.3f}",
             "Portfolio":  f"{pgp:+.3f}",
             impact_col:   f"{new_gp:+.3f} ({new_gp - pgp:+.3f})",
@@ -1346,8 +1346,8 @@ def _render_factor_tab(ticker: str) -> None:
     ]
     st.dataframe(pd.DataFrame(comp_data), hide_index=True, width="stretch")
     st.caption(
-        ":gray[GP (Gross Profitability) has ~2021-present coverage only — materially shorter "
-        "history than the other six factors. Treat its beta as directional.]"
+        ":gray[GP (Gross Profitability) is sourced from SEC EDGAR XBRL, matching the other "
+        "six factors' 2013-present history.]"
     )
 
     # Diversification / concentration verdict

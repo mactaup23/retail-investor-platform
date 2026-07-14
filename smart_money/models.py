@@ -230,7 +230,7 @@ class PriceCache(BaseModel):
 
 class FundSkillResult(BaseModel):
     """
-    7-factor skill decomposition scores written by the pipeline (Phase 5).
+    FF4 skill decomposition scores written by the pipeline (Phase 5).
 
     One row per fund; INSERT OR REPLACE semantics mean each pipeline run
     overwrites the previous score.  Module 4 reads this table directly
@@ -238,18 +238,18 @@ class FundSkillResult(BaseModel):
 
     quarters_used is JSON-encoded, e.g. '["2023Q1","2023Q2","2024Q1"]'.
 
-    beta_rmw/cma come from a primary 6-factor (mkt+smb+hml+mom+rmw+cma)
-    regression run over the fund's full available quarterly history — same
-    sample depth as the prior FF4 spec, just two more Ken-French factors.
-    beta_gp comes from a SEPARATE secondary regression restricted to the
-    subset of those quarters that fall within GP's own coverage window
-    (~2021-present) — GP has no Ken French analog and materially shorter
-    history than the other six factors, so a single joint 7-factor fit isn't
-    possible without truncating funds' pre-2021 history. n_quarters_gp
-    records how many quarters fed that secondary fit; beta_gp/t_stat_gp/
-    return_from_gp are null when too few GP-covered quarters exist. See
-    smart_money/factor_apply.py docstring for the full two-tier rationale —
-    never display beta_gp without noting its shorter, less reliable window.
+    beta_mom comes from the FF4 (mkt+smb+hml+mom) regression run over the
+    fund's full available quarterly history. beta_rmw/beta_cma/beta_gp (and
+    their t-stats/return_from_* columns) are always NULL — this module ran
+    a two-tier 7-factor model (adding RMW, CMA, and a secondary GP-only fit)
+    for a period, then reverted to FF4 after a backtest investigation found
+    no measurable predictive benefit from the three added factors on this
+    module's short per-fund quarterly panels. See smart_money/factor_apply.py
+    docstring and CLAUDE.md for the full investigation and why this
+    shouldn't be casually re-upgraded without re-running that validation.
+    The columns remain nullable (not dropped) so
+    smart_money/factor_apply_diagnostic.py can still write single-factor
+    isolation test results to this same table when re-validating.
     """
 
     fund             = ForeignKeyField(Fund, backref="skill_result", unique=True)

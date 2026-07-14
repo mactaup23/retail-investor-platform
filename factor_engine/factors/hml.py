@@ -48,9 +48,10 @@ factors) are deliberately NOT included here — there is no clean single-ETF
 proxy for either, unlike SMB/HML/MOM's Russell/MTUM analogs, so this
 ETF-proxy individual-holding path uses GP as its sole quality/investment-style
 factor while the Ken-French-backed paths (factor_engine/portfolio.py,
-dashboard/factor.py, smart_money/factor_apply.py) use genuine RMW/CMA
-instead.  GP's own history is short (~2021-present, see gp.py) relative to
-the other four ETF-proxy factors here.
+dashboard/factor.py) use genuine RMW/CMA instead — smart_money/factor_apply.py
+(Module 3/4 fund skill scoring) uses neither, running FF4 only (see that
+module's docstring for why).  GP's own history now spans 2013-present (see
+gp.py), matching the other four ETF-proxy factors here.
 """
 
 import pandas as pd
@@ -116,9 +117,9 @@ def compute_factor_loadings(
         Columns: momentum_return, benchmark_return, mom.
     gp_factor : optional pre-built GP factor DataFrame
         Columns: long_return, short_return, gp. See factor_engine/factors/gp.py —
-        coverage is bounded to ~2021-present, which will shrink n_obs (and
-        thus the whole regression's sample window, since this is a single
-        joint fit) for any [start, end] extending earlier.
+        coverage spans 2013-present; requesting a [start, end] extending
+        earlier will shrink n_obs (and thus the whole regression's sample
+        window, since this is a single joint fit) to whatever GP covers.
 
     Returns
     -------

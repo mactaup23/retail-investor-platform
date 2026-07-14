@@ -8,8 +8,8 @@ Holdings:    manual ticker/weight editor (add, remove, CSV import) — persisted
              to data/user_prefs.json under the "portfolio" key
 Header row:  date range inputs + Refresh button + last-analysed timestamp
 Factor row:  β_mkt · β_smb · β_hml · β_rmw · β_cma · β_mom · β_gp · R² · Alpha metric cards
-             (β_gp labeled "Gross Profitability, 2021–present" — shorter history than
-             the other six factors)
+             (β_gp labeled "Gross Profitability, 2013–present" — EDGAR XBRL-sourced,
+             matching the other six factors' history)
 Summary:     plain-English interpretation from the factor engine
 Attribution: stacked bar chart (weighted beta contributions per holding)
              + full per-holding table
@@ -103,11 +103,11 @@ def _render_stress_card(scenario: dict) -> None:
             f"RF: {rf * 100:+.1f}%"
         )
         if gp_available and gp is not None:
-            decomp_line += f"  Gross Profitability (2021–present): {gp * 100:+.1f}%"
+            decomp_line += f"  Gross Profitability (2013–present): {gp * 100:+.1f}%"
         st.caption(decomp_line)
         if not gp_available:
             st.caption(
-                ":gray[Gross Profitability (2021–present) has insufficient history to cover "
+                ":gray[Gross Profitability (2013–present) has insufficient history to cover "
                 "this scenario — omitted from the estimate above rather than treated as zero.]"
             )
         st.caption(
@@ -371,8 +371,8 @@ with st.container(horizontal=True):
     st.metric("β MOM",       f"{headline['beta_mom']:+.3f}",     border=True)
     st.metric(
         "β GP", f"{headline['beta_gp']:+.3f}", border=True,
-        help="Gross Profitability (2021–present) — proprietary factor, materially shorter "
-             "history than the other six. Treat as directional.",
+        help="Gross Profitability (2013–present) — proprietary factor, sourced from "
+             "SEC EDGAR XBRL, matching the other six factors' history.",
     )
     st.metric("R²",          f"{headline['r_squared']:.3f}",     border=True)
     st.metric("Alpha (ann.)", _pct(headline["alpha_annualised"]), border=True)
@@ -382,7 +382,7 @@ st.caption(
     f"{headline['r_squared'] * 100:.1f}% of daily portfolio variance  ·  "
     f"n = {headline['n_obs']} trading days  ·  "
     f"Period: {data['start']} → {data['end']}  ·  "
-    f"GP is Gross Profitability (2021–present)"
+    f"GP is Gross Profitability (2013–present)"
 )
 
 # Plain-English summary
@@ -418,7 +418,7 @@ chart_df = pd.DataFrame([
         {"ticker": r["ticker"], "factor": "β RMW",    "contribution": r["wtd_beta_rmw"]},
         {"ticker": r["ticker"], "factor": "β CMA",    "contribution": r["wtd_beta_cma"]},
         {"ticker": r["ticker"], "factor": "β MOM",    "contribution": r["wtd_beta_mom"]},
-        {"ticker": r["ticker"], "factor": "β GP (Gross Profitability, 2021–present)",
+        {"ticker": r["ticker"], "factor": "β GP (Gross Profitability, 2013–present)",
          "contribution": r["wtd_beta_gp"]},
     ]
 ])
@@ -433,7 +433,7 @@ bar_chart = (
             "factor:N",
             scale=alt.Scale(
                 domain=["β market", "β SMB", "β HML", "β RMW", "β CMA", "β MOM",
-                        "β GP (Gross Profitability, 2021–present)"],
+                        "β GP (Gross Profitability, 2013–present)"],
                 range=["#60A5FA", "#34D399", "#A78BFA", "#F472B6", "#38BDF8", "#FBBF24", "#FB923C"],
             ),
             legend=alt.Legend(title=None),
@@ -455,14 +455,14 @@ st.dataframe(
         "beta_rmw":        "β RMW",
         "beta_cma":        "β CMA",
         "beta_mom":        "β MOM",
-        "beta_gp":         "β GP (2021–present)",
+        "beta_gp":         "β GP (2013–present)",
         "wtd_beta_market": "Wtd β mkt",
         "wtd_beta_smb":    "Wtd β SMB",
         "wtd_beta_hml":    "Wtd β HML",
         "wtd_beta_rmw":    "Wtd β RMW",
         "wtd_beta_cma":    "Wtd β CMA",
         "wtd_beta_mom":    "Wtd β MOM",
-        "wtd_beta_gp":     "Wtd β GP (2021–present)",
+        "wtd_beta_gp":     "Wtd β GP (2013–present)",
         "alpha_annualised":"Alpha (ann.)",
         "r_squared":       "R²",
         "factor_basis":    "Factor basis",
@@ -476,14 +476,14 @@ st.dataframe(
         "β RMW":                 st.column_config.NumberColumn(format="%.4f"),
         "β CMA":                 st.column_config.NumberColumn(format="%.4f"),
         "β MOM":                 st.column_config.NumberColumn(format="%.4f"),
-        "β GP (2021–present)":   st.column_config.NumberColumn(format="%.4f"),
+        "β GP (2013–present)":   st.column_config.NumberColumn(format="%.4f"),
         "Wtd β mkt":             st.column_config.NumberColumn(format="%.4f"),
         "Wtd β SMB":             st.column_config.NumberColumn(format="%.4f"),
         "Wtd β HML":             st.column_config.NumberColumn(format="%.4f"),
         "Wtd β RMW":             st.column_config.NumberColumn(format="%.4f"),
         "Wtd β CMA":             st.column_config.NumberColumn(format="%.4f"),
         "Wtd β MOM":             st.column_config.NumberColumn(format="%.4f"),
-        "Wtd β GP (2021–present)": st.column_config.NumberColumn(format="%.4f"),
+        "Wtd β GP (2013–present)": st.column_config.NumberColumn(format="%.4f"),
         "Alpha (ann.)":          st.column_config.NumberColumn(format="%+.4f"),
         "R²":                    st.column_config.NumberColumn(format="%.4f"),
     },
@@ -498,9 +498,9 @@ st.caption(
     "Weighted betas (Wtd β) = individual ticker beta × portfolio weight. "
     "Their sum approximates — but won't exactly match — the headline portfolio betas, "
     "because independent regressions share the same factor matrix but not the same residual structure. "
-    "GP (Gross Profitability) is labeled '2021–present' throughout — its coverage is materially "
-    "shorter than the other six factors, so treat its beta as directional rather than a robust "
-    "multi-decade estimate."
+    "GP (Gross Profitability) is labeled '2013–present' throughout — sourced from SEC EDGAR "
+    "XBRL, matching this platform's other 2013-era history floors (13F filings, MTUM ETF "
+    "inception), though still short of RMW/CMA/HML's multi-decade Ken French history."
     + _intl_note
 )
 
