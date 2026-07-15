@@ -177,8 +177,14 @@ def _entry_and_exit(
     """
     kd = knowledge_date(period)
 
+    # Fetches exactly what this call's horizon needs, not the global max across
+    # HORIZONS_TRADING_DAYS — _cache is always a fresh dict per (period, horizon,
+    # universe) call site today (see compute_quarter_ic), so there is no cross-
+    # horizon reuse to protect by over-fetching. If a caller ever starts sharing
+    # one _cache across multiple horizon_days for the same cusip, this under-fetches
+    # for the larger horizon — re-widen to max(...) + 1 if that pattern appears.
     if cusip not in _cache:
-        _cache[cusip] = _priced_rows_from(cusip, kd, max(HORIZONS_TRADING_DAYS) + 1)
+        _cache[cusip] = _priced_rows_from(cusip, kd, horizon_days + 1)
     rows = _cache[cusip]
 
     if not rows:

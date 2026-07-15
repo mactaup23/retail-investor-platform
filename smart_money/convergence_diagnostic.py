@@ -1,31 +1,25 @@
 """
-Diagnostic-only convergence scoring: hard-filter small/routine position
-changes out of the convergence calculation entirely, instead of the
-production continuous down-weighting (_change_mult's tanh curve, which still
-lets a 5% trim contribute at 0.55x rather than excluding it).
+Diagnostic-only convergence scoring: apply a hard include/exclude rule to
+each (fund, cusip) move before it enters the convergence calculation, instead
+of the production continuous down-weighting (skill_weight x change_mult,
+which still lets e.g. a 5% trim or an unscored-but-plausible fund contribute
+at a reduced but nonzero weight).
 
-This exists to answer one question: does requiring a larger position change
-before it counts toward convergence improve the signal's 1/3-month IC (see
-backtest — those are the two horizons where FF4 already shows the most
-(relative) strength: +0.008 IC, t~1.4-1.5)? It is NOT a replacement for
-convergence.py's production scan_quarter()/_score_cusip() — this is a
-parallel, in-memory-only scoring path for backtesting a methodology variant.
-No DB writes, no persisted ConvergenceScore/FinalSignal rows, nothing for a
-production pipeline run to pick up.
+Generalized over a `move_filter(fund, primary_change) -> bool` predicate so
+the same scoring/backtest plumbing serves multiple methodology tests:
+    size_filter(threshold_pct)   — drop small INCREASED/DECREASED moves
+    tier_filter(allowed_fund_ids) — drop funds outside a skill tier entirely
 
-NEW/CLOSED changes are never filtered — they are already treated as decisive
-(change_mult=1.0) in production, and there's no analogous "how big was this
-trade" metric for them (no prior_shares baseline to compute a % change
-against). Only INCREASED/DECREASED changes are subject to the hard
-|shares_pct_change| >= threshold_pct gate; changes that fail it are dropped
-from the scoring calculation as if the fund made no move at all that quarter
-(not down-weighted to near-zero — excluded, so they also don't count toward
-n_funds/breadth).
+This is NOT a replacement for convergence.py's production
+scan_quarter()/_score_cusip() — this is a parallel, in-memory-only scoring
+path for backtesting methodology variants. No DB writes, no persisted
+ConvergenceScore/FinalSignal rows, nothing for a production pipeline run to
+pick up.
 
 Reuses unchanged from convergence.py: _collect_all_changes (change collection
-doesn't depend on the filter), _primary_change, _skill_weight, _change_mult,
+doesn't depend on any filter), _primary_change, _skill_weight, _change_mult,
 _load_skill_map, _BREADTH_SATURATION. Reuses unchanged from signal.py: _blend
-(NLP is independent of position-change filtering), _status, DISCOVERY_THRESHOLD.
+(NLP is independent of these filters), _status.
 
 Watchlist-universe status chain
 --------------------------------
@@ -42,6 +36,7 @@ for IC purposes, not an approximation.
 from __future__ import annotations
 
 import datetime
+from typing import Callable
 
 from scipy.stats import spearmanr
 
@@ -62,32 +57,53 @@ from smart_money.convergence import (
     _skill_weight,
 )
 from smart_money.changes import PositionChange
-from smart_money.models import FundSkillResult, Security, init_db
+from smart_money.models import Fund, FundSkillResult, Security, init_db
 from smart_money.nlp import load_scores
 from smart_money.signal import _blend, _status
 
+MoveFilter = Callable[[Fund, PositionChange], bool]
+
 
 # ---------------------------------------------------------------------------
-# Hard filter + filtered per-CUSIP scorer
+# Move-filter predicates
 # ---------------------------------------------------------------------------
 
-def _passes_filter(primary: PositionChange, threshold_pct: float) -> bool:
-    """NEW/CLOSED always pass; INCREASED/DECREASED need |pct_change| >= threshold_pct."""
-    if primary["change_type"] in ("NEW", "CLOSED"):
-        return True
-    pct = abs(primary.get("shares_pct_change") or 0.0)
-    return pct >= threshold_pct
+def size_filter(threshold_pct: float) -> MoveFilter:
+    """NEW/CLOSED always pass; INCREASED/DECREASED need |pct_change| >= threshold_pct.
+
+    There's no analogous "how big was this trade" metric for NEW/CLOSED (no
+    prior_shares baseline to compute a % change against), and they're already
+    treated as decisive (change_mult=1.0) in production — so they're exempt.
+    """
+    def _filter(fund: Fund, primary: PositionChange) -> bool:
+        if primary["change_type"] in ("NEW", "CLOSED"):
+            return True
+        pct = abs(primary.get("shares_pct_change") or 0.0)
+        return pct >= threshold_pct
+    return _filter
 
 
-def _score_cusip_filtered(
+def tier_filter(allowed_fund_ids: set[int]) -> MoveFilter:
+    """Only funds in allowed_fund_ids contribute a move, regardless of change
+    type or size — a fund-identity gate, not a move-characteristic gate."""
+    def _filter(fund: Fund, _primary: PositionChange) -> bool:
+        return fund.id in allowed_fund_ids
+    return _filter
+
+
+# ---------------------------------------------------------------------------
+# Filtered per-CUSIP scorer
+# ---------------------------------------------------------------------------
+
+def _score_cusip_variant(
     fund_changes: list[tuple],
     skill_map: dict[int, FundSkillResult],
-    threshold_pct: float,
+    move_filter: MoveFilter,
     min_total_weight: float,
 ) -> tuple[float, int] | None:
     """Same math as convergence._score_cusip's directional*breadth score, but
-    changes failing _passes_filter are excluded before they touch bull_w/bear_w
-    or the fund count — not down-weighted, dropped."""
+    moves failing move_filter are excluded before they touch bull_w/bear_w or
+    the fund count — not down-weighted, dropped."""
     bull_w = bear_w = 0.0
     n_bull = n_bear = 0
 
@@ -95,7 +111,7 @@ def _score_cusip_filtered(
         primary = _primary_change(changes)
         if primary["direction"] == "neutral":
             continue
-        if not _passes_filter(primary, threshold_pct):
+        if not move_filter(fund, primary):
             continue
 
         sw = _skill_weight(fund, skill_map)
@@ -119,9 +135,9 @@ def _score_cusip_filtered(
     return round(directional * breadth, 4), n_total
 
 
-def score_quarter_filtered(
+def score_quarter_variant(
     all_changes: dict[str, list[tuple]],
-    threshold_pct: float,
+    move_filter: MoveFilter,
     skill_map: dict[int, FundSkillResult],
     *,
     min_funds: int = 2,
@@ -143,7 +159,7 @@ def score_quarter_filtered(
 
     out: dict[str, tuple[float, str | None]] = {}
     for cusip in candidate_cusips:
-        result = _score_cusip_filtered(all_changes[cusip], skill_map, threshold_pct, min_total_weight)
+        result = _score_cusip_variant(all_changes[cusip], skill_map, move_filter, min_total_weight)
         if result is None:
             continue
         score, _n_total = result
@@ -152,7 +168,7 @@ def score_quarter_filtered(
 
 
 # ---------------------------------------------------------------------------
-# Backtest over the filtered scoring rule
+# Backtest over a filtered scoring rule
 # ---------------------------------------------------------------------------
 
 def _compute_quarter_ic(
@@ -192,31 +208,31 @@ def _compute_quarter_ic(
     )
 
 
-def run_filtered_backtest_multi(
-    thresholds: list[float],
+def run_variant_backtest_multi(
+    variants: dict[str, MoveFilter],
     horizons: tuple[int, ...] = (21, 63),
-) -> dict[float, "BacktestSummary"]:
+):
     """
-    Same computation as run_filtered_backtest, for multiple thresholds at
+    Run the full/watchlist backtest under multiple move_filter variants at
     once, sharing the one expensive step (_collect_all_changes — N-fund
     detect_changes + Holding aggregation per quarter) across all of them
-    instead of repeating it once per threshold. _collect_all_changes doesn't
-    depend on threshold_pct at all, only the scoring step does.
+    instead of repeating it once per variant. _collect_all_changes doesn't
+    depend on any filter, only the scoring step does.
 
-    Returns {threshold_pct → BacktestSummary}.
+    Returns {variant_label → BacktestSummary}.
     """
     init_db()
     skill_map = _load_skill_map()
     periods = _available_periods()
 
-    quarter_ics_by_threshold: dict[float, list[QuarterIC]] = {t: [] for t in thresholds}
-    prior_maps: dict[float, dict[str, float]] = {t: {} for t in thresholds}
+    quarter_ics_by_variant: dict[str, list[QuarterIC]] = {v: [] for v in variants}
+    prior_maps: dict[str, dict[str, float]] = {v: {} for v in variants}
 
     for period in periods:
         all_changes = _collect_all_changes(period)
 
-        for threshold in thresholds:
-            filtered_scores = score_quarter_filtered(all_changes, threshold, skill_map)
+        for label, move_filter in variants.items():
+            filtered_scores = score_quarter_variant(all_changes, move_filter, skill_map)
 
             tickers = [t for _s, t in filtered_scores.values() if t]
             nlp_map = load_scores(tickers)
@@ -224,7 +240,7 @@ def run_filtered_backtest_multi(
             full_scores: dict[str, tuple[float, str | None]] = {}
             watchlist_scores: dict[str, tuple[float, str | None]] = {}
             new_prior_map: dict[str, float] = {}
-            prior_map = prior_maps[threshold]
+            prior_map = prior_maps[label]
 
             for cusip, (conv_score, ticker) in filtered_scores.items():
                 nlp = nlp_map.get(ticker) if ticker else None
@@ -240,23 +256,29 @@ def run_filtered_backtest_multi(
                     watchlist_scores[cusip] = (final_score, ticker)
                     new_prior_map[cusip] = final_score
 
-            prior_maps[threshold] = new_prior_map
+            prior_maps[label] = new_prior_map
 
             for horizon in horizons:
-                quarter_ics_by_threshold[threshold].append(_compute_quarter_ic(period, horizon, "full", full_scores))
-                quarter_ics_by_threshold[threshold].append(_compute_quarter_ic(period, horizon, "watchlist", watchlist_scores))
+                quarter_ics_by_variant[label].append(_compute_quarter_ic(period, horizon, "full", full_scores))
+                quarter_ics_by_variant[label].append(_compute_quarter_ic(period, horizon, "watchlist", watchlist_scores))
 
-    return {t: summarize(qics) for t, qics in quarter_ics_by_threshold.items()}
+    return {v: summarize(qics) for v, qics in quarter_ics_by_variant.items()}
+
+
+# ---------------------------------------------------------------------------
+# Backward-compatible trade-size-filter entry points
+# ---------------------------------------------------------------------------
+
+def run_filtered_backtest_multi(thresholds: list[float], horizons: tuple[int, ...] = (21, 63)):
+    """Trade-size-filter convenience wrapper around run_variant_backtest_multi.
+    Returns {threshold_pct → BacktestSummary}."""
+    variants = {t: size_filter(t) for t in thresholds}
+    by_label = run_variant_backtest_multi(variants, horizons)
+    return {t: by_label[t] for t in thresholds}
 
 
 def run_filtered_backtest(threshold_pct: float, horizons: tuple[int, ...] = (21, 63)):
-    """
-    Run the full/watchlist backtest under the filtered convergence-scoring
-    rule (threshold_pct=0.0 reproduces the production/unfiltered rule — use
-    it as a sanity check against the real backtest numbers).
-
-    Single-threshold convenience wrapper around run_filtered_backtest_multi.
-    Returns a BacktestSummary (same shape as smart_money.backtest.summarize's
-    return value) so callers can print it with the same formatting.
-    """
+    """Single-threshold convenience wrapper. threshold_pct=0.0 reproduces the
+    production/unfiltered rule — use it as a sanity check against the real
+    backtest numbers."""
     return run_filtered_backtest_multi([threshold_pct], horizons)[threshold_pct]
