@@ -500,6 +500,121 @@ RMW/momentum loadings — see Module 1) without the same statistical penalty. Th
 deliberately runs two different factor-model complexities for two different jobs, rather than
 one unified factor count across the whole system.
 
+**Beyond FF4 vs FF7: three tests of whether the signal can be improved further**
+
+With FF4 established as the production skill-scoring model and the baseline IC
+characterized (+0.008, not statistically significant, per the table above), the natural
+next question is whether some *other* change to signal construction could improve on
+that baseline. This investigation tested three independent, structural hypotheses — each
+isolating exactly one variable, evaluated against the same FF4 production configuration,
+the same 60-fund universe, and the same convergence/NLP blending logic used everywhere
+else on this platform.
+
+*Hypothesis 1 — does the signal predict better at longer horizons?* The production
+backtest measured IC at 1/3/6-month horizons (table above). This test extended it to
+8/10/12 months to see whether predictive power was still building, or had already peaked.
+
+| Horizon | Universe | Mean IC | t-stat | Hit rate |
+|---------|----------|---------|--------|----------|
+| 1-month | full | +0.008 | +1.42 | 66% |
+| 1-month | watchlist | +0.006 | +1.19 | 62% |
+| 3-month | full | +0.008 | +1.52 | 57% |
+| 3-month | watchlist | +0.007 | +1.52 | 53% |
+| 6-month | full | +0.005 | +0.98 | 56% |
+| 6-month | watchlist | +0.006 | +1.11 | 56% |
+| 8-month | full | +0.006 | +1.25 | 47% |
+| 8-month | watchlist | +0.006 | +1.11 | 47% |
+| 10-month | full | +0.002 | +0.35 | 51% |
+| 10-month | watchlist | +0.001 | +0.25 | 49% |
+| 12-month | full | -0.001 | -0.14 | 59% |
+| 12-month | watchlist | -0.002 | -0.29 | 54% |
+
+Predictive power does not improve with horizon — it decays. IC/t-stat peak near 1-3
+months and fade toward (and, at 12 months, slightly past) zero. This is a real decay in
+signal, not a shrinking-sample artifact: average observations per quarter fall only ~3.5%
+from the 1-month horizon to the 12-month horizon, while the t-stat collapses from +1.42
+to -0.14 over the same range. A 45-day-lagged quarterly positioning signal apparently
+carries real, if weak, information about the near-term (1-3 month) forward path, and that
+information decays rather than compounding at longer horizons.
+
+*Hypothesis 2 — does filtering out small, routine position changes improve the signal?*
+Production already down-weights small `INCREASED`/`DECREASED` position changes
+continuously (a 5% trim contributes at 0.55× weight, a 100%+ change at 0.90×, via a tanh
+curve — see "Fund skill weight tiers" above). This test asked whether a *hard* cutoff —
+excluding small changes from the convergence calculation entirely, rather than
+down-weighting them — would sharpen the signal. Tested at 10% and 25%
+`|shares_pct_change|` thresholds, 1- and 3-month horizons, both universes:
+
+| Threshold | Coverage lost (full) | Coverage lost (watchlist) | IC / t-stat range across both horizons |
+|-----------|----------------------|----------------------------|------------------------------------------|
+| 10% | -7.6% signals | -10.2% signals | +0.006 to +0.007 (baseline: +0.007 to +0.008) |
+| 25% | -15.1% signals | -21.2% signals | +0.006 to +0.008 (baseline: +0.007 to +0.008) |
+
+Neither threshold produced a reliable IC or t-stat improvement over the baseline's
+continuous down-weighting — results stayed within noise of each other regardless of
+threshold. Meanwhile the coverage cost was real: the 25% threshold discarded roughly a
+fifth of watchlist-universe signals. Hard-filtering by trade size trades away coverage for
+no measurable benefit; the existing continuous weighting already captures what a size cutoff
+would add.
+
+*Hypothesis 3 — does restricting to only the highest-skill-tier funds improve the signal?*
+Production weights every fund continuously by skill (0.10×-3.00× for scored funds,
+0.40×-0.90× bucket defaults for unscored funds — see "Fund skill weight tiers" above).
+This test asked whether *excluding* lower-tier funds from the convergence calculation
+entirely, rather than continuously down-weighting them, would sharpen the signal. Tested
+at the 1-month horizon (the strongest horizon per Hypothesis 1), three tiers:
+
+| Tier | Funds | Full IC / t-stat | Watchlist IC / t-stat |
+|------|-------|-------------------|-------------------------|
+| Baseline (all funds, continuous weighting) | 61 | +0.008 / +1.41 | +0.006 / +1.19 |
+| High confidence only (abs(α t-stat) > 1.5, ≥12 quarters) | 7 | -0.001 / -0.18 | +0.001 / +0.11 |
+| Positive alpha only | 28 | +0.005 / +0.97 | +0.003 / +0.56 |
+| High confidence AND positive alpha | 3 | +0.030 / +1.53 | NaN (see below) |
+
+The first two tiers underperform baseline on every metric. "High confidence" is a
+statistical-*precision* cut, not a skill-*direction* cut — of the 7 funds, 4 have
+confidently *negative* alpha, so the tier mixes genuinely-skilled and
+genuinely-unskilled-but-precisely-measured funds, sacrificing baseline's diversification
+benefit without buying quality. The third tier's full-universe result (+0.030 IC) is the
+single best number produced anywhere in this investigation — but it should not be read as
+a real finding. It rests on just 66 observations per quarter versus baseline's 2,264 (a
+~34x smaller sample), drops one quarter outright, and its watchlist-universe counterpart
+produced a mathematically undefined result (too few candidates in at least one quarter for
+rank correlation to be computed at all). This is a textbook small-sample mirage: an
+attractive point estimate that collapses under the same restriction applied to a
+neighboring universe. The continuous skill-weighting already in production handles this
+tradeoff more robustly than any hard skill-tier cutoff tested.
+
+**Methodology integrity check: no look-ahead bias.** Before trusting any of the above, the
+backtest's return-measurement logic was independently verified. A 13F is not public on its
+quarter-end date — funds have up to 45 calendar days to file. The backtest's
+`knowledge_date()` function (`smart_money/backtest.py`) adds that 45-day SEC filing lag to
+the quarter-end date, and forward returns are measured from the first tradeable price *on
+or after* that disclosure date — never from quarter-end itself. Confirmed directly in code
+(`_entry_and_exit` sources its price-lookup start date from `knowledge_date(period)`, not
+`period`) and empirically (a spot-checked observation for period 2013-06-30 entered at
+2013-08-14 — the full 45-day gap). All IC figures in this investigation, and in the
+FF4/FF7 investigation above, are computed on this look-ahead-safe basis.
+
+**Overall conclusion.** None of the three structural changes tested — longer horizons,
+harder trade-size filtering, harder fund-tier restriction — meaningfully improves the
+signal's predictive power over the existing FF4 production configuration's continuous
+weighting scheme. In each case, the continuous, smooth approach already in production
+(down-weight rather than exclude) outperformed or matched every hard-cutoff alternative
+tested, while hard cutoffs consistently cost real signal coverage. Taken together, this
+suggests the current architecture is near the practical ceiling for what a single
+quarterly institutional-positioning signal, structurally bound to a 45-day reporting lag,
+can predict.
+
+**Path forward.** Meaningfully improving the platform's overall predictiveness from here
+likely requires adding genuinely *independent* signals rather than continuing to tune this
+one — e.g. earnings-surprise / post-earnings-announcement drift, sector-rotation context,
+or extending the existing NLP infrastructure toward broader news/sentiment analysis. This
+mirrors how real institutional quant strategies operate: combining many weakly-predictive,
+independent signals compounds into something more useful than exhaustively tuning a single
+dominant one. That is a larger scope of work than a backtest parameter sweep, and is noted
+here as a direction rather than committed to as a roadmap item.
+
 **Past performance does not guarantee future results.** These figures are computed over a
 historical sample and reflect the specific universe, weighting scheme, and time period
 tested. They do not account for transaction costs, slippage, or taxes, and a signal that
