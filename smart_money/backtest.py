@@ -85,7 +85,7 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 KNOWLEDGE_LAG_DAYS = 45   # SEC 13F filing deadline after quarter-end
-HORIZONS_TRADING_DAYS = (21, 63, 126)   # ~1 month, 1 quarter, 2 quarters
+HORIZONS_TRADING_DAYS = (21, 63, 126, 168, 210, 252)   # ~1, 3, 6, 8, 10, 12 months
 MIN_QUARTER_OBS = 10   # minimum observations for a quarter's IC to be meaningful
 _ENTRY_TOLERANCE_DAYS = 10   # max gap between knowledge_date and the first priced row
 
