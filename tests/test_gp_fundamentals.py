@@ -9,6 +9,12 @@ import pandas as pd
 import pytest
 
 from factor_engine.gp_fundamentals import (
+    GOODWILL_FULL,
+    GOODWILL_NONE,
+    GOODWILL_PARTIAL,
+    NIBCL_AP_ONLY,
+    NIBCL_FULL,
+    NIBCL_NONE,
     SOURCE_DERIVED,
     SOURCE_ESTIMATED,
     SOURCE_REPORTED,
@@ -17,6 +23,7 @@ from factor_engine.gp_fundamentals import (
     _derive_q4_periods,
     _duration_periods,
     _instant_periods,
+    _resolve_invested_capital_deductions,
     _ttm_from_quarterly_rows,
 )
 
@@ -87,11 +94,18 @@ def test_instant_periods_excludes_duration_facts():
 
 # ── _build_observations: reported vs estimated COGS ────────────────────────
 
-def _us_gaap(revenue_entries, cogs_entries, assets_entries):
+def _us_gaap(revenue_entries, cogs_entries, assets_entries, cash_entries=None):
+    # cash_entries defaults to $0 cash at every Assets period-end, so
+    # invested_capital collapses to total_assets and existing gp_ratio
+    # assertions (written against the pre-invested-capital-refinement
+    # formula) still hold unless a test overrides it explicitly.
+    if cash_entries is None:
+        cash_entries = [_fact(end=e["end"], val=0.0) for e in assets_entries]
     return {
         "Revenues": {"units": {"USD": revenue_entries}},
         "CostOfRevenue": {"units": {"USD": cogs_entries}},
         "Assets": {"units": {"USD": assets_entries}},
+        "CashAndCashEquivalentsAtCarryingValue": {"units": {"USD": cash_entries}},
     }
 
 
@@ -167,12 +181,177 @@ def test_build_observations_skips_period_missing_assets():
     assert _build_observations(us_gaap, (350, 380), "A") == []
 
 
+# ── _resolve_invested_capital_deductions: invested-capital refinement ───────
+
+def test_resolve_invested_capital_deductions_full_tier_sums_ap_and_accrued():
+    us_gaap = {
+        "CashAndCashEquivalentsAtCarryingValue": {"units": {"USD": [_fact(end="2019-12-31", val=100.0)]}},
+        "AccountsPayableCurrent": {"units": {"USD": [_fact(end="2019-12-31", val=40.0)]}},
+        "AccruedLiabilitiesCurrent": {"units": {"USD": [_fact(end="2019-12-31", val=10.0)]}},
+    }
+    d = _resolve_invested_capital_deductions(us_gaap)
+    assert d["2019-12-31"]["cash"] == 100.0
+    assert d["2019-12-31"]["nibcl"] == pytest.approx(50.0)
+    assert d["2019-12-31"]["nibcl_source"] == NIBCL_FULL
+
+
+def test_resolve_invested_capital_deductions_combined_ap_accrued_tag_ranks_as_full():
+    us_gaap = {
+        "CashAndCashEquivalentsAtCarryingValue": {"units": {"USD": [_fact(end="2019-12-31", val=100.0)]}},
+        "AccountsPayableAndOtherAccruedLiabilitiesCurrent": {"units": {"USD": [_fact(end="2019-12-31", val=50.0)]}},
+    }
+    d = _resolve_invested_capital_deductions(us_gaap)
+    assert d["2019-12-31"]["nibcl"] == 50.0
+    assert d["2019-12-31"]["nibcl_source"] == NIBCL_FULL
+
+
+def test_resolve_invested_capital_deductions_ap_only_when_no_accrued_tag():
+    # KR-style gap: AP resolves, no accrued-liabilities-shaped tag exists at all.
+    us_gaap = {
+        "CashAndCashEquivalentsAtCarryingValue": {"units": {"USD": [_fact(end="2019-12-31", val=100.0)]}},
+        "AccountsPayableCurrent": {"units": {"USD": [_fact(end="2019-12-31", val=40.0)]}},
+    }
+    d = _resolve_invested_capital_deductions(us_gaap)
+    assert d["2019-12-31"]["nibcl"] == 40.0
+    assert d["2019-12-31"]["nibcl_source"] == NIBCL_AP_ONLY
+
+
+def test_resolve_invested_capital_deductions_none_tier_defaults_nibcl_to_zero():
+    us_gaap = {
+        "CashAndCashEquivalentsAtCarryingValue": {"units": {"USD": [_fact(end="2019-12-31", val=100.0)]}},
+    }
+    d = _resolve_invested_capital_deductions(us_gaap)
+    assert d["2019-12-31"]["nibcl"] == 0.0
+    assert d["2019-12-31"]["nibcl_source"] == NIBCL_NONE
+
+
+def test_resolve_invested_capital_deductions_uses_combined_cash_sti_tag_when_separate_missing():
+    us_gaap = {
+        "CashCashEquivalentsAndShortTermInvestments": {"units": {"USD": [_fact(end="2019-12-31", val=150.0)]}},
+    }
+    d = _resolve_invested_capital_deductions(us_gaap)
+    assert d["2019-12-31"]["cash"] == 150.0
+    assert d["2019-12-31"]["short_term_investments"] == 0.0
+
+
+def test_resolve_invested_capital_deductions_omits_period_with_no_cash_at_all():
+    us_gaap = {
+        "AccountsPayableCurrent": {"units": {"USD": [_fact(end="2019-12-31", val=40.0)]}},
+    }
+    d = _resolve_invested_capital_deductions(us_gaap)
+    assert d == {}
+
+
+def test_build_observations_gp_ratio_uses_invested_capital_not_total_assets():
+    us_gaap = _us_gaap(
+        revenue_entries=[_fact("2019-01-01", "2019-12-31", val=1000.0)],
+        cogs_entries=[_fact("2019-01-01", "2019-12-31", val=600.0)],
+        assets_entries=[_fact(end="2019-12-31", val=2000.0)],
+        cash_entries=[_fact(end="2019-12-31", val=500.0)],
+    )
+    us_gaap["AccountsPayableCurrent"] = {"units": {"USD": [_fact(end="2019-12-31", val=100.0)]}}
+    obs = _build_observations(us_gaap, (350, 380), "A")
+    assert len(obs) == 1
+    row = obs[0]
+    # invested_capital = 2000 - 500 (cash) - 0 (sti) - 100 (nibcl, ap_only tier) = 1400
+    assert row["invested_capital"] == pytest.approx(1400.0)
+    assert row["gp_ratio"] == pytest.approx((1000.0 - 600.0) / 1400.0)
+    assert row["nibcl_source"] == NIBCL_AP_ONLY
+
+
+def test_build_observations_skips_period_with_non_positive_invested_capital():
+    us_gaap = _us_gaap(
+        revenue_entries=[_fact("2019-01-01", "2019-12-31", val=1000.0)],
+        cogs_entries=[_fact("2019-01-01", "2019-12-31", val=600.0)],
+        assets_entries=[_fact(end="2019-12-31", val=2000.0)],
+        cash_entries=[_fact(end="2019-12-31", val=2500.0)],   # cash alone exceeds total assets
+    )
+    assert _build_observations(us_gaap, (350, 380), "A") == []
+
+
+# ── _resolve_invested_capital_deductions: goodwill/intangibles tier ─────────
+
+def test_resolve_invested_capital_deductions_goodwill_full_tier_sums_goodwill_and_intangibles():
+    us_gaap = {
+        "CashAndCashEquivalentsAtCarryingValue": {"units": {"USD": [_fact(end="2019-12-31", val=100.0)]}},
+        "Goodwill": {"units": {"USD": [_fact(end="2019-12-31", val=50.0)]}},
+        "IntangibleAssetsNetExcludingGoodwill": {"units": {"USD": [_fact(end="2019-12-31", val=20.0)]}},
+    }
+    d = _resolve_invested_capital_deductions(us_gaap)
+    assert d["2019-12-31"]["goodwill_intangibles"] == pytest.approx(70.0)
+    assert d["2019-12-31"]["goodwill_source"] == GOODWILL_FULL
+
+
+def test_resolve_invested_capital_deductions_goodwill_partial_when_no_intangible_tag():
+    us_gaap = {
+        "CashAndCashEquivalentsAtCarryingValue": {"units": {"USD": [_fact(end="2019-12-31", val=100.0)]}},
+        "Goodwill": {"units": {"USD": [_fact(end="2019-12-31", val=50.0)]}},
+    }
+    d = _resolve_invested_capital_deductions(us_gaap)
+    assert d["2019-12-31"]["goodwill_intangibles"] == 50.0
+    assert d["2019-12-31"]["goodwill_source"] == GOODWILL_PARTIAL
+
+
+def test_resolve_invested_capital_deductions_goodwill_partial_aapl_style_no_goodwill_tag():
+    # AAPL-style gap: intangibles resolve, but Goodwill hasn't been a
+    # separately-tagged concept for this filer/period at all.
+    us_gaap = {
+        "CashAndCashEquivalentsAtCarryingValue": {"units": {"USD": [_fact(end="2019-12-31", val=100.0)]}},
+        "IntangibleAssetsNetExcludingGoodwill": {"units": {"USD": [_fact(end="2019-12-31", val=20.0)]}},
+    }
+    d = _resolve_invested_capital_deductions(us_gaap)
+    assert d["2019-12-31"]["goodwill_intangibles"] == 20.0
+    assert d["2019-12-31"]["goodwill_source"] == GOODWILL_PARTIAL
+
+
+def test_resolve_invested_capital_deductions_goodwill_partial_via_finite_lived_fallback():
+    us_gaap = {
+        "CashAndCashEquivalentsAtCarryingValue": {"units": {"USD": [_fact(end="2019-12-31", val=100.0)]}},
+        "Goodwill": {"units": {"USD": [_fact(end="2019-12-31", val=50.0)]}},
+        "FiniteLivedIntangibleAssetsNet": {"units": {"USD": [_fact(end="2019-12-31", val=15.0)]}},
+    }
+    d = _resolve_invested_capital_deductions(us_gaap)
+    assert d["2019-12-31"]["goodwill_intangibles"] == pytest.approx(65.0)
+    assert d["2019-12-31"]["goodwill_source"] == GOODWILL_PARTIAL
+
+
+def test_resolve_invested_capital_deductions_goodwill_none_tier_defaults_to_zero():
+    us_gaap = {
+        "CashAndCashEquivalentsAtCarryingValue": {"units": {"USD": [_fact(end="2019-12-31", val=100.0)]}},
+    }
+    d = _resolve_invested_capital_deductions(us_gaap)
+    assert d["2019-12-31"]["goodwill_intangibles"] == 0.0
+    assert d["2019-12-31"]["goodwill_source"] == GOODWILL_NONE
+
+
+def test_build_observations_invested_capital_subtracts_goodwill_and_intangibles():
+    us_gaap = _us_gaap(
+        revenue_entries=[_fact("2019-01-01", "2019-12-31", val=1000.0)],
+        cogs_entries=[_fact("2019-01-01", "2019-12-31", val=600.0)],
+        assets_entries=[_fact(end="2019-12-31", val=2000.0)],
+        cash_entries=[_fact(end="2019-12-31", val=200.0)],
+    )
+    us_gaap["Goodwill"] = {"units": {"USD": [_fact(end="2019-12-31", val=300.0)]}}
+    us_gaap["IntangibleAssetsNetExcludingGoodwill"] = {"units": {"USD": [_fact(end="2019-12-31", val=100.0)]}}
+    obs = _build_observations(us_gaap, (350, 380), "A")
+    assert len(obs) == 1
+    row = obs[0]
+    # invested_capital = 2000 - 200 (cash) - 0 (sti) - 0 (nibcl) - 400 (goodwill+intangibles) = 1400
+    assert row["invested_capital"] == pytest.approx(1400.0)
+    assert row["goodwill_intangibles"] == pytest.approx(400.0)
+    assert row["goodwill_source"] == GOODWILL_FULL
+    assert row["gp_ratio"] == pytest.approx((1000.0 - 600.0) / 1400.0)
+
+
 # ── _ttm_from_quarterly_rows: source rollup ─────────────────────────────────
 
 def _quarterly_row(period_end, source):
     return {
         "period_end": period_end, "revenue": 100.0, "cogs": 60.0,
-        "total_assets": 1000.0, "gp_ratio": 0.04, "freq": "Q", "source": source,
+        "total_assets": 1000.0, "cash": 0.0, "short_term_investments": 0.0,
+        "nibcl": 0.0, "nibcl_source": NIBCL_FULL,
+        "goodwill_intangibles": 0.0, "goodwill_source": GOODWILL_FULL,
+        "gp_ratio": 0.04, "freq": "Q", "source": source,
     }
 
 
@@ -213,6 +392,25 @@ def test_ttm_source_is_derived_if_worst_quarter_is_derived_not_estimated():
     ttm = _ttm_from_quarterly_rows(rows)
     assert len(ttm) == 1
     assert ttm[0]["source"] == SOURCE_DERIVED
+
+
+def test_ttm_goodwill_source_is_worst_tier_among_four_quarters():
+    rows = [_quarterly_row(pe, SOURCE_REPORTED) for pe in
+            ["2019-03-31", "2019-06-30", "2019-09-30", "2019-12-31"]]
+    rows[1]["goodwill_source"] = GOODWILL_PARTIAL   # one weak quarter taints the window
+    ttm = _ttm_from_quarterly_rows(pd.DataFrame(rows))
+    assert len(ttm) == 1
+    assert ttm[0]["goodwill_source"] == GOODWILL_PARTIAL
+
+
+def test_ttm_invested_capital_subtracts_most_recent_quarters_goodwill():
+    rows = [_quarterly_row(pe, SOURCE_REPORTED) for pe in
+            ["2019-03-31", "2019-06-30", "2019-09-30", "2019-12-31"]]
+    rows[-1]["goodwill_intangibles"] = 200.0   # only the most recent quarter's snapshot should count
+    ttm = _ttm_from_quarterly_rows(pd.DataFrame(rows))
+    assert len(ttm) == 1
+    # total_assets=1000, cash=0, sti=0, nibcl=0, goodwill_intangibles=200 -> invested_capital=800
+    assert ttm[0]["invested_capital"] == pytest.approx(800.0)
 
 
 # ── _derive_q4_periods ───────────────────────────────────────────────────────
@@ -270,6 +468,10 @@ def test_build_quarterly_observations_prefers_reported_over_derived():
         "Assets": {"units": {"USD": [
             _fact(end="2019-03-31", val=2000.0),
             _fact(end="2019-12-31", val=2000.0),
+        ]}},
+        "CashAndCashEquivalentsAtCarryingValue": {"units": {"USD": [
+            _fact(end="2019-03-31", val=0.0),
+            _fact(end="2019-12-31", val=0.0),
         ]}},
     }
     obs = {o["period_end"]: o for o in _build_quarterly_observations(us_gaap)}

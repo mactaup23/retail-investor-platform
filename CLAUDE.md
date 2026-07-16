@@ -57,6 +57,80 @@ Portfolio-level analysis and stress tests run the full FF7 spec (market, SMB, HM
 
 Stress test methodology: historical factor shock replay against current betas. This is risk characterization, NOT a backtest. Label accordingly in all output.
 
+**GP factor invested-capital refinement (Module 2 only — Module 3/4 no longer uses GP at all).**
+GP_ratio = (Revenue - COGS) / (Total Assets - Cash - Short-Term Investments - NIBCL),
+where NIBCL (Non-Interest-Bearing Current Liabilities) = Accounts Payable + Accrued
+Liabilities, not short-term debt (factor_engine/gp_fundamentals.py). Replaces the original
+Total-Assets-only denominator, which penalized capital-light, high-cash businesses
+(AAPL/MSFT) and ambiguously treated efficient supplier-financed working capital (KR) as a
+flaw rather than the legitimate capital efficiency it is. All tags (Cash, Short-Term
+Investments, AP, Accrued Liabilities) were already present in the cached raw XBRL
+companyfacts JSON from the original GP/XBRL migration — this refinement required zero new
+EDGAR pulls, only re-deriving data/gp/fundamentals/*.csv from the existing cache.
+Per-observation `nibcl_source` tracks tag-completeness tier (full / ap_only / none — 20.3%
+of the ~1500-ticker universe has no parseable AP/accrued/combined tag at all and defaults
+NIBCL to 0 rather than being dropped). `_MAX_PLAUSIBLE_GP_RATIO` in gp_exclusions.py was
+recalibrated from 1.0 to 2.5 (empirically reproducing the original threshold's ~0.87%
+row-level exclusion rate on the new formula's shifted distribution, not guessed).
+
+**Negative result: did not fix the motivating problem.** This refinement was undertaken
+specifically hoping to improve MSFT's beta_gp ranking. Re-running the 2022-2024 directional
+sanity check (scripts/run_gp_sanity.py) after the rebuild found MSFT's beta_gp moved
+*further* negative (-0.077 → -0.111), not less — same direction of failure, larger
+magnitude. AAPL moved the same way (-0.036 → -0.071). The likely mechanical reason: beta_gp
+is a regression against the long/short quintile portfolio's daily returns, driven by
+relative cross-sectional ranking across the full ~1450-ticker universe at every historical
+rebalance — not by one company's own gp_ratio level. Every capital-light company's ratio
+rises under the new denominator, not just MSFT's, so a single company's relative rank isn't
+guaranteed to improve just because its own ratio improved in isolation. Kept anyway: the
+formula is still more economically correct on its own terms (matches the standard
+invested-capital convention; KR/MKC's positive loadings are now understood as genuine
+negative-working-capital efficiency being rewarded, not something to "fix" — see
+run_gp_sanity.py, which was updated to reflect this and no longer expects KR to score
+negative). GOOGL crossed from negative to slightly positive; NVDA and XOM both moved
+substantially less-negative. The AAPL/MSFT discrepancy remains open and undocumented-away —
+flagged in run_gp_sanity.py's output, not silently accepted.
+
+**Goodwill/intangibles extension — mixed result, kept for a real but partial win.**
+Before building further, a read-only diagnostic (no formula change) pulled actual balance
+sheet composition for AAPL/MSFT/KR as % of total assets, directly from the same cached raw
+XBRL — no new EDGAR calls. Finding: MSFT carries Goodwill + Intangible Assets at ~20% of
+total assets vs ~7% for AAPL and KR — roughly 3x, tracing to MSFT's acquisition history
+(Activision Blizzard, LinkedIn, Nuance, GitHub) vs AAPL's largely organic balance sheet.
+This was plausible enough to justify extending the denominator: GP_ratio = (Revenue - COGS)
+/ (Total Assets - Cash - Short-Term Investments - NIBCL - Goodwill - Intangible Assets).
+Tag coverage is cleaner than NIBCL's (Goodwill 89.4% ever / 85.5% recent, Intangibles 89.5%
+ever / 80.9% recent, no combined tag exists anywhere in the universe) but surfaced a
+material gap: AAPL's `Goodwill` XBRL tag has zero entries after 2017 — Apple stopped
+separately disclosing goodwill as a discrete concept (58 tickers, 3.9% of the universe,
+show this same "tagged historically, stopped recently" pattern). Per-observation
+`goodwill_source` tracks completeness (full / partial / none); `_MAX_PLAUSIBLE_GP_RATIO`
+recalibrated a second time, 2.5 → 4.5, same empirical-exclusion-rate-matching method as the
+first recalibration.
+
+Result: **MSFT genuinely improved** — beta_gp -0.111 → -0.024, a 78% reduction in magnitude
+(still technically negative, but close to neutral for the first time). This was real,
+targeted progress on the motivating problem, not another miss. But it came with real
+collateral cost: AAPL moved further negative (-0.071 → -0.171, partly because AAPL's own
+goodwill-tag gap means it doesn't get the same denominator credit as peers who still tag
+Goodwill), GOOGL flipped back negative (+0.011 → -0.090), AMZN moved much more negative
+(-0.048 → -0.284, now failing the reinvestor check it used to narrowly pass), and NVDA moved
+more negative (-0.492 → -0.811). XOM's magnitude nearly doubled (-0.594 → -1.147) — this was
+investigated directly (compared short-basket composition and overall factor volatility
+between the NIBCL-only and goodwill-extended versions) and found to be **not a bug**: XOM's
+actual energy-sector peers (EQT, HLX, VAL, KNTK, CVI, PBF) have consistently occupied the
+bottom GP quintile across every version of this formula — the same "capital-intensive
+commodity businesses score low" pattern, amplified, not new or spurious.
+
+**Kept anyway**, per explicit decision after reviewing the full mixed picture: the formula
+is more economically correct on its own terms, and it measurably helped the specific problem
+it was built to address, even though the fix didn't isolate to just its target. `beta_gp` is
+driven by cross-sectional rank across the ~1450-ticker universe at every historical
+rebalance, not by one company's own ratio in isolation — a company-specific denominator fix
+predictably has spillover effects on other companies' loadings, in either direction. Full
+before/after/after comparison across all three formula versions is in run_gp_sanity.py's
+module docstring.
+
 ## Module 3 — EDGAR Ingestion and Fund Skill
 
 Pipeline phases: edgar → cusip → prices → returns → skill

@@ -58,12 +58,10 @@ Two distinct problems, two distinct fixes
    Excluding the whole ticker over one bad filing would throw away good
    data (Kimberly-Clark: 66 good quarters, 1 corrupted one). Instead, only
    the specific implausible observation(s) are dropped, keeping the rest.
-   A small number of tickers also show a MILD single-period outlier close
-   to 1.0 (e.g. Netflix 2010: gp_ratio 1.02, a genuinely thin balance-sheet
-   quarter early in its history) — these are filtered by the same
-   mechanism for consistency, on the reasoning that Novy-Marx GP_ratio
-   should not economically exceed 1.0 (Revenue - COGS > Total Assets),
-   whether the cause is data corruption or a real extreme outlier quarter
+   A small number of tickers also show a MILD single-period outlier (e.g.
+   Netflix 2010, a genuinely thin balance-sheet quarter early in its
+   history) — these are filtered by the same mechanism for consistency:
+   whether the cause is data corruption or a real extreme-outlier quarter,
    neither is representative of the factor's ongoing signal for that name.
 
 Discovery method: full-universe validation comparing every XBRL-derived
@@ -71,6 +69,41 @@ gp_ratio against the yfinance-derived baseline on their 2021-2025 overlap
 window (scripts/verify_gp_xbrl.py), which found the aggregate correlation
 gate failing (-0.007) purely because of these tickers — excluding them
 brought correlation on the "clean" 94% of the universe to 0.93.
+
+_MAX_PLAUSIBLE_GP_RATIO recalibration for the invested-capital refinement
+--------------------------------------------------------------------------
+The original Novy-Marx gp_ratio = (Revenue-COGS)/Total Assets bounds
+economically at 1.0 (Revenue-COGS can't exceed Total Assets in a legitimate
+observation), so 1.0 was both the plausibility bound AND the filter
+threshold. Once the denominator became invested capital (Total Assets -
+Cash - Short-Term Investments - NIBCL — see factor_engine/gp_fundamentals.py),
+that identity no longer holds: invested capital is smaller than Total
+Assets by construction, so gp_ratio's whole distribution shifts upward, and
+a fixed 1.0 threshold would wrongly discard legitimate observations from
+exactly the capital-light, high-margin names (AAPL/MSFT-style) this
+refinement was motivated by.
+
+Recalibrated empirically post-refinement (not guessed) by reproducing the
+original threshold's *exclusion rate*, not its raw value: across the
+non-excluded universe, |old_gp_ratio| > 1.0 dropped 0.869% of observations.
+The new formula's distribution hits that same 99.13rd percentile at
+|gp_ratio| ≈ 2.27 — rounded to 2.5 below. This keeps the row-level filter
+exactly as strict, proportionally, as it was before the formula changed,
+rather than either loosening it (letting more data-corruption cases like
+the KMB/FTI/SNEX/MKSI tag-scaling artifacts found during this migration
+through) or tightening it (cutting legitimate signal like BKNG's
+well-known negative-working-capital economics, which lands at ~11.5 and is
+excluded either way — consistent with the existing "extreme outlier
+quarter, not representative of the ongoing signal" filtering rationale
+above, not a flaw in the new threshold).
+
+Recalibrated a second time (2.5 -> 4.5) when the invested-capital denominator
+was further extended to also subtract Goodwill and Intangible Assets (see
+factor_engine/gp_fundamentals.py module docstring) — subtracting purchased
+goodwill shrinks invested capital further for acquisitive companies, shifting
+the gp_ratio distribution up again. Same methodology: reproduce the original
+1.0 threshold's ~0.869% exclusion rate on the new distribution (empirically
+~4.29, rounded to 4.5), not a fresh guess.
 """
 
 import pandas as pd
@@ -127,16 +160,22 @@ EXCLUDED_TICKERS: dict[str, str] = {
 
 # ── Observation-level filter ────────────────────────────────────────────────
 
-_MAX_PLAUSIBLE_GP_RATIO = 1.0   # Revenue - COGS should not exceed Total Assets in a
-                                # legitimate observation; see module docstring point 2.
+_MAX_PLAUSIBLE_GP_RATIO = 4.5   # Recalibrated a second time for the goodwill/intangibles
+                                # extension to the invested-capital denominator (see module
+                                # docstring) — subtracting goodwill/intangibles shrinks
+                                # invested capital further, shifting the gp_ratio
+                                # distribution up again. Reproduces the same ~0.87%
+                                # exclusion rate the original 1.0 threshold set (empirically
+                                # ~4.29 on the new distribution, rounded to 4.5), same
+                                # methodology as the first recalibration (1.0 -> 2.5).
 
 
 def drop_implausible_observations(df: "pd.DataFrame") -> "pd.DataFrame":
     """
-    Remove individual rows with |gp_ratio| > 1.0 from a ticker's fundamentals
-    DataFrame, keeping the rest of its history. Only meant to be called for
-    tickers NOT in EXCLUDED_TICKERS — see module docstring for why these are
-    two different mechanisms.
+    Remove individual rows with |gp_ratio| > _MAX_PLAUSIBLE_GP_RATIO from a
+    ticker's fundamentals DataFrame, keeping the rest of its history. Only
+    meant to be called for tickers NOT in EXCLUDED_TICKERS — see module
+    docstring for why these are two different mechanisms.
     """
     if df is None or df.empty:
         return df

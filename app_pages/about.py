@@ -732,20 +732,57 @@ Ken French's official daily momentum series instead.
 
 *GP factor covers 2013–2026, sourced from SEC EDGAR XBRL, with 58 documented exclusions.*
 The proprietary Gross Profitability factor is built from SEC EDGAR's XBRL `companyfacts`
-API (Revenue, COGS, Total Assets), giving it full 2013-present history — matching the
-platform's other 2013-era coverage floors. An earlier version built from yfinance's free
-fundamentals endpoint was bounded to roughly 2021-present by that data source's ~5-year
-statement window; that limitation no longer applies. 58 tickers are excluded with
-documented per-ticker reasoning (`factor_engine/gp_exclusions.py`) — 35 REITs (no
-COGS-equivalent concept exists for a rental-income business model), 18 tickers with a
-pervasive company-specific cost-tag mismatch (e.g. health insurers), and 5 unexplained
-magnitude mismatches — and every remaining observation carries a `source` tag
-(`reported` / `derived_from_ytd_subtraction` / `estimated_from_margin`) recording how it
-was derived. Module 3 fund skill scoring does not use GP at all (see "Signal Validation"
-below for why) — GP remains part of Module 1's individual-holding factor profiles and
-Module 2's portfolio-level analysis. Historical stress tests still omit GP's contribution
-entirely for the 2008 and 2020 scenarios, which predate even its extended coverage,
-rather than treating it as zero exposure.
+API, giving it full 2013-present history — matching the platform's other 2013-era coverage
+floors. An earlier version built from yfinance's free fundamentals endpoint was bounded to
+roughly 2021-present by that data source's ~5-year statement window; that limitation no
+longer applies. 58 tickers are excluded with documented per-ticker reasoning
+(`factor_engine/gp_exclusions.py`) — 35 REITs (no COGS-equivalent concept exists for a
+rental-income business model), 18 tickers with a pervasive company-specific cost-tag
+mismatch (e.g. health insurers), and 5 unexplained magnitude mismatches — and every
+remaining observation carries a `source` tag (`reported` / `derived_from_ytd_subtraction` /
+`estimated_from_margin`) recording how it was derived. Module 3 fund skill scoring does not
+use GP at all (see "Signal Validation" below for why) — GP remains part of Module 1's
+individual-holding factor profiles and Module 2's portfolio-level analysis. Historical
+stress tests still omit GP's contribution entirely for the 2008 and 2020 scenarios, which
+predate even its extended coverage, rather than treating it as zero exposure.
+
+*GP uses an invested-capital denominator, not raw Total Assets — built in two stages, with
+mixed but net-positive results.* GP_ratio = (Revenue − COGS) / (Total Assets − Cash −
+Short-Term Investments − Non-Interest-Bearing Current Liabilities − Goodwill − Intangible
+Assets), where NIBCL = Accounts Payable + Accrued Liabilities. Stage 1 (the NIBCL
+adjustment) was undertaken specifically hoping to fix MSFT's counter-intuitive negative
+gross-profitability loading — it didn't; MSFT's loading moved further negative, not less.
+It was kept anyway because it's more economically correct on its own terms: idle cash and
+interest-free supplier financing aren't capital a business had to deploy to earn its gross
+profit, so this avoids penalizing capital-light, high-cash names purely for holding cash,
+and it correctly credits efficient negative-working-capital retailers (e.g. Kroger, and
+McCormick) for a genuine capital efficiency rather than treating large accounts payable as
+an ambiguous flaw.
+
+Stage 2 (subtracting Goodwill + Intangible Assets) followed a read-only balance-sheet
+diagnostic — no formula change, just pulling actual composition data already cached from
+the same XBRL migration — which found MSFT carries goodwill + intangibles at ~20% of total
+assets versus ~7% for AAPL and Kroger, roughly 3x, traceable directly to MSFT's acquisition
+history (Activision Blizzard, LinkedIn, Nuance, GitHub) rather than AAPL's largely organic
+balance sheet. That evidence justified extending the denominator, and this time MSFT
+*did* improve substantially — its loading's magnitude fell 78% (from -0.111 to -0.024),
+though it remains technically negative. That win came with real collateral cost: AAPL
+moved further negative (partly because Apple itself stopped separately disclosing Goodwill
+as a distinct XBRL concept after 2017, so it doesn't get the same denominator credit as
+peers who still tag it), GOOGL flipped back negative, and both AMZN and NVDA moved further
+from the "shouldn't be penalized for reinvestment" result the factor was designed to
+deliver. XOM's negative loading nearly doubled in magnitude — checked directly and found
+to be driven by its real energy-sector peers (already present in the low-quality quintile
+under every version of this formula), not a data bug.
+
+Both stages were kept after full disclosure of their tradeoffs: the formula is more
+economically correct on its own terms, and the goodwill stage delivered real, if partial
+and not free, progress on the problem it targeted. A single stock's factor loading depends
+on its correlation with the long/short portfolio's returns, which is driven by relative
+ranking across the ~1,450-ticker universe at every historical rebalance — so a
+company-targeted fix predictably has spillover effects on other companies' loadings, in
+either direction. Full before/after/after comparison across all three formula versions is
+documented in `scripts/run_gp_sanity.py`.
 
 *Skill scores require 12+ quarters to be reliable.* Below 12 quarters, the OLS alpha
 estimate has wide confidence intervals. Alpha t-statistics and confidence labels are always

@@ -1,7 +1,75 @@
 """
 Per-ticker fundamental data fetcher for the Gross Profitability (GP) factor.
 
-Novy-Marx (2013) gross profitability: GP_ratio = (Revenue - COGS) / Total Assets
+Novy-Marx (2013) gross profitability, invested-capital refinement:
+    GP_ratio = (Revenue - COGS) / (Total Assets - Cash - Short-Term Investments
+                                    - Non-Interest-Bearing Current Liabilities
+                                    - Goodwill - Intangible Assets)
+
+NIBCL = Accounts Payable + Accrued Liabilities (not short-term debt — the
+standard convention subtracts only operating current liabilities, not
+financing ones, since GP is meant to measure production-level economic
+quality per dollar of capital actually invested in the business, not per
+dollar of gross assets. A dollar of cash sitting on the balance sheet or a
+dollar of interest-free supplier credit isn't capital the business had to
+invest to generate its gross profit — the original Total-Assets-only
+denominator penalized capital-light, high-cash businesses like AAPL/MSFT
+relative to capital-intensive ones, and separately failed to credit
+efficient supplier-financed working capital (e.g. KR/grocery retail) as the
+legitimate efficiency it is. See factor_engine/factors/gp.py's module
+docstring for how this feeds the long/short construction; this module only
+owns the ratio's components.
+
+Tag coverage empirically checked across all 1494 universe tickers with
+usable us-gaap facts (see data/gp/xbrl_raw/*.json, already cached from the
+original migration — no new EDGAR pull was needed for this refinement):
+  - Cash: 98.5% resolve CashAndCashEquivalentsAtCarryingValue (or a legacy
+    fallback tag). Required — a period with no resolvable cash tag is
+    skipped rather than assumed zero, since "no cash" is never a plausible
+    true state for an operating company (unlike short-term investments,
+    below).
+  - Short-term investments: only 40.1% tag a standalone concept
+    (ShortTermInvestments / MarketableSecuritiesCurrent /
+    OtherShortTermInvestments); an additional 7.8% only tag a combined
+    CashCashEquivalentsAndShortTermInvestments concept instead of separate
+    Cash and STI (verified numerically: Cash + MarketableSecuritiesCurrent
+    == the combined tag's value for GOOGL's overlapping periods). Missing
+    STI defaults to 0 for the remaining ~52% — genuinely holding no
+    short-term investments is a common, plausible true state.
+  - Accounts payable + accrued liabilities (NIBCL): only 76.2% tag a
+    standalone AP concept, 64.7% a standalone accrued-liabilities concept,
+    and 16.7% tag a single combined AccountsPayableAndAccruedLiabilitiesCurrent
+    (or ...AndOtherAccruedLiabilitiesCurrent) concept instead of separating
+    the two (confirmed for MKC, which has no standalone AP tag at all).
+    Critically, 20.3% of the universe (303 tickers) resolves NEITHER AP,
+    NOR accrued, NOR the combined tag — not a partial gap like KR (which
+    has AP but no accrued-liabilities-shaped tag whatsoever) but zero
+    current-liabilities information. Per-observation nibcl_source tracks
+    which of these three tiers applied (NIBCL_FULL / NIBCL_AP_ONLY /
+    NIBCL_NONE — see constants below), the same audit-trail principle as
+    the revenue/COGS "source" column: rather than dropping ~20% of the
+    universe from GP entirely, missing NIBCL components default toward 0
+    (invested capital simply omits the deduction it lacks data for) and the
+    gap is tracked, not hidden, so results can be isolated to this tier if
+    they ever look off for affected tickers.
+  - Goodwill + intangible assets: motivated by a read-only balance-sheet-
+    composition diagnostic (not part of this pipeline) that found MSFT
+    carries goodwill+intangibles at ~20% of total assets versus ~7% for
+    AAPL and KR — roughly 3x, consistent with MSFT's acquisition history
+    (Activision Blizzard, LinkedIn, Nuance, GitHub) versus AAPL's largely
+    organic balance sheet. Tag coverage is materially cleaner than NIBCL's:
+    Goodwill resolves for 89.4% of the universe (85.5% in recent filings —
+    the ~4pp gap matters, see below), intangibles-excl-goodwill for 89.5%
+    (80.9% recent), and — unlike NIBCL — no filer in this universe tags a
+    single combined goodwill+intangibles concept, so there's no combined-tag
+    fallback case to handle. One real gap found while checking AAPL
+    specifically: AAPL's Goodwill tag has zero entries after 2017 — Apple
+    stopped separately disclosing goodwill as a discrete XBRL fact, not
+    because it has none. 58 tickers (3.9% of the universe) show this same
+    "tagged historically, stopped recently" pattern. Per-observation
+    goodwill_source tracks completeness (GOODWILL_FULL / GOODWILL_PARTIAL /
+    GOODWILL_NONE — see constants below); missing components default to 0
+    rather than dropping the observation, same policy as NIBCL.
 
 Data source: SEC EDGAR XBRL companyfacts (not yfinance)
 ---------------------------------------------------------
@@ -107,10 +175,13 @@ One companyfacts request per company (CIK) returns that company's entire
 tagged history in one round trip — unlike yfinance, which needed 4 separate
 calls per ticker (annual/quarterly income statement + balance sheet) each
 bounded to a narrow window. gp_xbrl_client.py caches the raw JSON per CIK;
-this module derives (period_end, revenue, cogs, total_assets, gp_ratio,
-freq, source, low_confidence_vs_yfinance) rows from that cache and writes
-its own per-ticker CSV to data/gp/fundamentals/{ticker}.csv — unchanged
-cache location and base schema (plus the two new provenance columns) from
+this module derives (period_end, revenue, cogs, total_assets, cash,
+short_term_investments, nibcl, nibcl_source, goodwill_intangibles,
+goodwill_source, invested_capital, gp_ratio, freq, source,
+low_confidence_vs_yfinance, high_confidence_pre_2021) rows
+from that cache and writes its own per-ticker CSV to
+data/gp/fundamentals/{ticker}.csv — unchanged cache location and base
+schema (plus the invested-capital columns) from
 the yfinance era, so factor_engine/factors/gp.py needs no changes to
 consume it.
 
@@ -147,6 +218,34 @@ SOURCE_DERIVED = "derived_from_ytd_subtraction"
 SOURCE_ESTIMATED = "estimated_from_margin"
 _SOURCE_RANK = {SOURCE_REPORTED: 0, SOURCE_DERIVED: 1, SOURCE_ESTIMATED: 2}   # confidence order, best first
 
+# NIBCL (Accounts Payable + Accrued Liabilities) completeness tiers — see
+# module docstring's tag-coverage numbers for why a plain boolean isn't
+# enough: "AP resolved, no accrued" (KR-style, 11.2% of the universe) is a
+# meaningfully different gap from "nothing resolved at all" (20.3%).
+NIBCL_FULL = "full"           # AP + accrued both resolved, or a combined tag covering both
+NIBCL_AP_ONLY = "ap_only"     # AP resolved, no accrued-liabilities-shaped tag exists for this filer
+NIBCL_NONE = "none"           # neither AP, accrued, nor a combined tag resolved — NIBCL defaults to 0
+_NIBCL_SOURCE_RANK = {NIBCL_FULL: 0, NIBCL_AP_ONLY: 1, NIBCL_NONE: 2}   # confidence order, best first
+
+# Goodwill + intangible-assets completeness tiers. Unlike NIBCL, no combined
+# tag exists anywhere in this universe (checked empirically — 0% of ~1500
+# tickers), so there's no "combined tag" case to track. But a 3-tier scheme
+# is still needed rather than a boolean: Goodwill and the intangibles tag
+# resolve (or fail to resolve) *independently* per period, and which one is
+# missing matters for interpretation — see AAPL, which stopped tagging
+# Goodwill as a discrete concept after 2017 (Intangibles-excl-goodwill still
+# resolves) while ~85% of the universe still tags Goodwill normally in
+# recent filings. GOODWILL_PARTIAL covers that case (and the mirror image —
+# Goodwill present, no intangibles tag at all) without pretending to
+# distinguish "this filer never had this concept" from "this filer stopped
+# tagging it" from the fact pattern alone.
+GOODWILL_FULL = "full"        # Goodwill AND the canonical intangibles-excl-goodwill tag both resolved
+GOODWILL_PARTIAL = "partial"  # only one of {goodwill, intangibles} resolved for this period (or
+                              # intangibles resolved only via the finite-lived-only fallback,
+                              # which may miss an indefinite-lived component like trademarks)
+GOODWILL_NONE = "none"        # neither resolved at all — goodwill_intangibles defaults to 0
+_GOODWILL_SOURCE_RANK = {GOODWILL_FULL: 0, GOODWILL_PARTIAL: 1, GOODWILL_NONE: 2}
+
 # Tried in priority order *per period* — see module docstring.
 _REVENUE_TAGS = [
     "Revenues",
@@ -161,6 +260,39 @@ _COGS_TAGS = [
 ]
 _ASSETS_TAGS = ["Assets"]   # standardized enough that a fallback list isn't needed
 
+# Invested-capital deduction tags — see module docstring for empirical
+# coverage percentages behind these priority orders.
+_CASH_TAGS = [
+    "CashAndCashEquivalentsAtCarryingValue",
+    "CashEquivalentsAtCarryingValue",
+    "Cash",
+]
+_STI_TAGS = [
+    "ShortTermInvestments",
+    "MarketableSecuritiesCurrent",
+    "OtherShortTermInvestments",
+]
+_CASH_STI_COMBINED_TAGS = ["CashCashEquivalentsAndShortTermInvestments"]
+_AP_TAGS = [
+    "AccountsPayableCurrent",
+    "AccountsPayableTradeCurrent",
+    "AccountsPayable",
+]
+_ACCRUED_TAGS = [
+    "AccruedLiabilitiesCurrent",
+    "OtherAccruedLiabilitiesCurrent",
+    "AccruedLiabilities",
+]
+_AP_ACCRUED_COMBINED_TAGS = [
+    "AccountsPayableAndAccruedLiabilitiesCurrent",
+    "AccountsPayableAndOtherAccruedLiabilitiesCurrent",
+]
+_GOODWILL_TAGS = ["Goodwill"]   # standardized enough that a fallback list isn't needed
+_INTANGIBLE_EXCL_GOODWILL_TAGS = ["IntangibleAssetsNetExcludingGoodwill"]
+_INTANGIBLE_FINITE_LIVED_TAGS = ["FiniteLivedIntangibleAssetsNet"]   # fallback: finite-lived
+# component only, missing any indefinite-lived intangibles (e.g. trademarks)
+# a filer doesn't separately break out — see GOODWILL_PARTIAL above.
+
 _ANNUAL_SPAN_DAYS = (350, 380)     # a single fiscal year's duration fact
 _QUARTER_SPAN_DAYS = (75, 100)     # a single fiscal quarter's duration fact (covers 4-4-5 calendars)
 _NINE_MONTH_SPAN_DAYS = (250, 290) # a "nine months ended" YTD-cumulative duration fact
@@ -170,7 +302,9 @@ _NINE_MONTH_SPAN_DAYS = (250, 290) # a "nine months ended" YTD-cumulative durati
 # every resumed run) from "never attempted" (no cache file at all).
 _EMPTY_SENTINEL = pd.DataFrame({
     "period_end": [], "revenue": [], "cogs": [], "total_assets": [],
-    "gp_ratio": [], "freq": [], "source": [],
+    "cash": [], "short_term_investments": [], "nibcl": [], "nibcl_source": [],
+    "goodwill_intangibles": [], "goodwill_source": [],
+    "invested_capital": [], "gp_ratio": [], "freq": [], "source": [],
     "low_confidence_vs_yfinance": [], "high_confidence_pre_2021": [],
 })
 
@@ -282,19 +416,119 @@ def _instant_periods(entries_by_tag: list[list[dict]]) -> dict[str, dict]:
     return resolved
 
 
+def _resolve_invested_capital_deductions(us_gaap: dict) -> dict[str, dict]:
+    """
+    Resolve (cash, short_term_investments, nibcl, nibcl_source,
+    goodwill_intangibles, goodwill_source) for every balance-sheet date this
+    company reports cash for. Keyed by period end only (all six are
+    instant/point-in-time facts, like Total Assets) — see module docstring
+    for the empirical tag-coverage numbers behind each fallback tier below.
+
+    Cash is required: an end date with no resolvable cash tag is simply
+    absent from the returned dict (callers must skip that period — "no
+    cash" is never a plausible true value to assume). Short-term
+    investments, NIBCL, and goodwill/intangibles all default toward 0 when
+    their tags don't resolve, since each is commonly and legitimately zero
+    (or, for goodwill/intangibles, sometimes simply undisclosed as a
+    discrete XBRL concept — see GOODWILL_PARTIAL's docstring) for many
+    filers.
+    """
+    cash_by_end = _instant_periods(_facts_by_tag(us_gaap, _CASH_TAGS))
+    sti_by_end = _instant_periods(_facts_by_tag(us_gaap, _STI_TAGS))
+    combined_cash_sti_by_end = _instant_periods(_facts_by_tag(us_gaap, _CASH_STI_COMBINED_TAGS))
+    ap_by_end = _instant_periods(_facts_by_tag(us_gaap, _AP_TAGS))
+    accrued_by_end = _instant_periods(_facts_by_tag(us_gaap, _ACCRUED_TAGS))
+    combined_ap_accrued_by_end = _instant_periods(_facts_by_tag(us_gaap, _AP_ACCRUED_COMBINED_TAGS))
+    goodwill_by_end = _instant_periods(_facts_by_tag(us_gaap, _GOODWILL_TAGS))
+    intangible_full_by_end = _instant_periods(_facts_by_tag(us_gaap, _INTANGIBLE_EXCL_GOODWILL_TAGS))
+    intangible_finite_by_end = _instant_periods(_facts_by_tag(us_gaap, _INTANGIBLE_FINITE_LIVED_TAGS))
+
+    result: dict[str, dict] = {}
+    for end in set(cash_by_end) | set(combined_cash_sti_by_end):
+        if end in cash_by_end:
+            cash_val = float(cash_by_end[end]["val"])
+            sti_val = float(sti_by_end[end]["val"]) if end in sti_by_end else 0.0
+        else:
+            # No separate Cash tag for this period, but the combined
+            # Cash+STI concept covers it — use it as the total directly
+            # rather than skipping (verified Cash + STI == combined exactly
+            # on GOOGL's overlapping periods; see module docstring).
+            cash_val = float(combined_cash_sti_by_end[end]["val"])
+            sti_val = 0.0
+
+        if end in ap_by_end and end in accrued_by_end:
+            nibcl_val = float(ap_by_end[end]["val"]) + float(accrued_by_end[end]["val"])
+            nibcl_source = NIBCL_FULL
+        elif end in combined_ap_accrued_by_end:
+            # A single tag already covering both concepts is just as
+            # complete as the separate sum above, so it ranks the same tier.
+            nibcl_val = float(combined_ap_accrued_by_end[end]["val"])
+            nibcl_source = NIBCL_FULL
+        elif end in ap_by_end:
+            nibcl_val = float(ap_by_end[end]["val"])
+            nibcl_source = NIBCL_AP_ONLY
+        else:
+            nibcl_val = 0.0
+            nibcl_source = NIBCL_NONE
+
+        goodwill_val = float(goodwill_by_end[end]["val"]) if end in goodwill_by_end else 0.0
+        has_goodwill = end in goodwill_by_end
+        if end in intangible_full_by_end:
+            intangible_val = float(intangible_full_by_end[end]["val"])
+            intangible_is_full_tag = True
+        elif end in intangible_finite_by_end:
+            intangible_val = float(intangible_finite_by_end[end]["val"])
+            intangible_is_full_tag = False
+        else:
+            intangible_val = 0.0
+            intangible_is_full_tag = False
+        has_any_intangible = end in intangible_full_by_end or end in intangible_finite_by_end
+
+        if has_goodwill and intangible_is_full_tag:
+            goodwill_source = GOODWILL_FULL
+        elif not has_goodwill and not has_any_intangible:
+            goodwill_source = GOODWILL_NONE
+        else:
+            goodwill_source = GOODWILL_PARTIAL
+
+        result[end] = {
+            "cash": cash_val,
+            "short_term_investments": sti_val,
+            "nibcl": nibcl_val,
+            "nibcl_source": nibcl_source,
+            "goodwill_intangibles": goodwill_val + intangible_val,
+            "goodwill_source": goodwill_source,
+        }
+    return result
+
+
 def _build_observations(us_gaap: dict, span_days: tuple[int, int], freq: str) -> list[dict]:
     """
-    Assemble (period_end, revenue, cogs, total_assets, gp_ratio, freq, source)
-    rows for one frequency bucket (annual duration or quarterly duration).
+    Assemble (period_end, revenue, cogs, total_assets, cash,
+    short_term_investments, nibcl, nibcl_source, goodwill_intangibles,
+    goodwill_source, invested_capital, gp_ratio, freq, source) rows for one
+    frequency bucket (annual duration or quarterly duration).
 
     COGS gap-filling: periods with Revenue + Assets but no resolvable COGS
     tag get an estimated COGS from this company's own median historical
     gross margin (computed only from this company's periods where both
     Revenue and COGS actually resolved) — see module docstring.
+
+    invested_capital = Total Assets - Cash - Short-Term Investments - NIBCL
+    - Goodwill - Intangible Assets. A period is skipped (not fabricated) if
+    Cash doesn't resolve at all (see _resolve_invested_capital_deductions)
+    or if the resulting invested capital is not positive — a company's
+    current liabilities plus purchased goodwill/intangibles can legitimately
+    exceed its remaining tangible/operating assets (aggressive negative-
+    working-capital businesses, or serial acquirers with modest tangible
+    asset bases relative to purchased goodwill), and dividing by a
+    non-positive denominator would produce a meaningless or sign-flipped
+    ratio rather than a real profitability read.
     """
     revenue_periods = _duration_periods(_facts_by_tag(us_gaap, _REVENUE_TAGS), span_days)
     cogs_periods = _duration_periods(_facts_by_tag(us_gaap, _COGS_TAGS), span_days)
     assets_by_end = _instant_periods(_facts_by_tag(us_gaap, _ASSETS_TAGS))
+    deductions_by_end = _resolve_invested_capital_deductions(us_gaap)
 
     reported_margins = [
         1.0 - cogs_periods[key]["val"] / rev_e["val"]
@@ -308,6 +542,9 @@ def _build_observations(us_gaap: dict, span_days: tuple[int, int], freq: str) ->
         assets_e = assets_by_end.get(end)
         if assets_e is None or not assets_e["val"]:
             continue
+        deductions = deductions_by_end.get(end)
+        if deductions is None:
+            continue   # no resolvable Cash for this period — can't compute invested capital
 
         cogs_e = cogs_periods.get((start, end))
         if cogs_e is not None:
@@ -318,14 +555,28 @@ def _build_observations(us_gaap: dict, span_days: tuple[int, int], freq: str) ->
             continue   # no reported COGS and no basis to estimate — skip, don't fabricate
 
         revenue_val, assets_val = float(rev_e["val"]), float(assets_e["val"])
+        invested_capital = (
+            assets_val - deductions["cash"] - deductions["short_term_investments"]
+            - deductions["nibcl"] - deductions["goodwill_intangibles"]
+        )
+        if invested_capital <= 0:
+            continue
+
         obs.append({
-            "period_end":   end,
-            "revenue":      revenue_val,
-            "cogs":         cogs_val,
-            "total_assets": assets_val,
-            "gp_ratio":     (revenue_val - cogs_val) / assets_val,
-            "freq":         freq,
-            "source":       source,
+            "period_end":             end,
+            "revenue":                revenue_val,
+            "cogs":                   cogs_val,
+            "total_assets":           assets_val,
+            "cash":                   deductions["cash"],
+            "short_term_investments": deductions["short_term_investments"],
+            "nibcl":                  deductions["nibcl"],
+            "nibcl_source":           deductions["nibcl_source"],
+            "goodwill_intangibles":   deductions["goodwill_intangibles"],
+            "goodwill_source":        deductions["goodwill_source"],
+            "invested_capital":       invested_capital,
+            "gp_ratio":               (revenue_val - cogs_val) / invested_capital,
+            "freq":                   freq,
+            "source":                 source,
         })
     return obs
 
@@ -393,6 +644,7 @@ def _build_quarterly_observations(us_gaap: dict) -> list[dict]:
     revenue_ytd9 = _duration_periods(_facts_by_tag(us_gaap, _REVENUE_TAGS), _NINE_MONTH_SPAN_DAYS)
     cogs_ytd9 = _duration_periods(_facts_by_tag(us_gaap, _COGS_TAGS), _NINE_MONTH_SPAN_DAYS)
     assets_by_end = _instant_periods(_facts_by_tag(us_gaap, _ASSETS_TAGS))
+    deductions_by_end = _resolve_invested_capital_deductions(us_gaap)
 
     existing_quarter_ends = {end for (_start, end) in revenue_q.keys()}
     derived_rev, derived_cogs = _derive_q4_periods(
@@ -419,6 +671,9 @@ def _build_quarterly_observations(us_gaap: dict) -> list[dict]:
         assets_e = assets_by_end.get(end)
         if assets_e is None or not assets_e["val"]:
             continue
+        deductions = deductions_by_end.get(end)
+        if deductions is None:
+            continue   # no resolvable Cash for this period — can't compute invested capital
 
         if (start, end) in cogs_q:
             cogs_val, source = float(cogs_q[(start, end)]["val"]), SOURCE_REPORTED
@@ -430,14 +685,28 @@ def _build_quarterly_observations(us_gaap: dict) -> list[dict]:
             continue
 
         revenue_val, assets_val = float(rev_e["val"]), float(assets_e["val"])
+        invested_capital = (
+            assets_val - deductions["cash"] - deductions["short_term_investments"]
+            - deductions["nibcl"] - deductions["goodwill_intangibles"]
+        )
+        if invested_capital <= 0:
+            continue
+
         obs.append({
-            "period_end":   end,
-            "revenue":      revenue_val,
-            "cogs":         cogs_val,
-            "total_assets": assets_val,
-            "gp_ratio":     (revenue_val - cogs_val) / assets_val,
-            "freq":         "Q",
-            "source":       source,
+            "period_end":             end,
+            "revenue":                revenue_val,
+            "cogs":                   cogs_val,
+            "total_assets":           assets_val,
+            "cash":                   deductions["cash"],
+            "short_term_investments": deductions["short_term_investments"],
+            "nibcl":                  deductions["nibcl"],
+            "nibcl_source":           deductions["nibcl_source"],
+            "goodwill_intangibles":   deductions["goodwill_intangibles"],
+            "goodwill_source":        deductions["goodwill_source"],
+            "invested_capital":       invested_capital,
+            "gp_ratio":               (revenue_val - cogs_val) / invested_capital,
+            "freq":                   "Q",
+            "source":                 source,
         })
     return obs
 
@@ -456,20 +725,33 @@ _TTM_MAX_SPAN_DAYS = 320
 
 def _ttm_from_quarterly_rows(quarterly_obs: pd.DataFrame) -> list[dict]:
     """
-    Convert single-quarter (revenue, cogs, total_assets, source) rows into
-    trailing-twelve-month gp_ratio observations.
+    Convert single-quarter (revenue, cogs, total_assets, cash,
+    short_term_investments, nibcl, nibcl_source, goodwill_intangibles,
+    goodwill_source, source) rows into trailing-twelve-month gp_ratio
+    observations.
 
     For each run of 4 consecutive quarters (by period_end), sums revenue and
-    cogs across the window and divides by total_assets as of the most recent
-    quarter in that window. Windows must span 250-320 days end-to-end (3
-    quarter-gaps of ~90 days each ≈ 273 days) — a wider or narrower span
-    means the "4 rows" aren't actually 4 consecutive fiscal quarters (a data
-    gap), and that window is skipped rather than silently mixing periods.
+    cogs across the window and divides by invested capital (total_assets -
+    cash - short_term_investments - nibcl - goodwill_intangibles) as of the
+    most recent quarter in that window — all five balance-sheet deductions
+    are point-in-time figures, so (like total_assets already did) only the
+    most recent quarter's snapshot is used, never summed across the window.
+    Windows must span 250-320 days end-to-end (3 quarter-gaps of ~90 days
+    each ≈ 273 days) — a wider or narrower span means the "4 rows" aren't
+    actually 4 consecutive fiscal quarters (a data gap), and that window is
+    skipped rather than silently mixing periods.
 
-    A TTM observation's source is the *worst* (lowest-confidence) tier among
-    its 4 contributing quarters, per _SOURCE_RANK — one weak quarter is
-    enough to set the trailing sum's confidence, so this rolls up
-    conservatively rather than averaging it away.
+    A TTM observation's source (COGS confidence), nibcl_source (NIBCL
+    completeness), and goodwill_source (goodwill/intangibles completeness)
+    are each the *worst* tier among its 4 contributing quarters, per
+    _SOURCE_RANK / _NIBCL_SOURCE_RANK / _GOODWILL_SOURCE_RANK — one weak
+    quarter is enough to set the trailing observation's confidence on that
+    axis, so this rolls up conservatively rather than averaging it away.
+    The three axes are independent (a quarter can have solid COGS but no
+    accrued-liabilities tag, or a resolvable NIBCL but no goodwill tag for
+    that specific quarter — see AAPL, which stopped tagging Goodwill after
+    2017), same rationale as keeping low_confidence_vs_yfinance separate
+    from source elsewhere in this module.
     """
     if quarterly_obs is None or quarterly_obs.empty:
         return []
@@ -487,18 +769,34 @@ def _ttm_from_quarterly_rows(quarterly_obs: pd.DataFrame) -> list[dict]:
         rev_ttm = float(window["revenue"].sum())
         cogs_ttm = float(window["cogs"].sum())
         assets = float(window["total_assets"].iloc[-1])
+        cash = float(window["cash"].iloc[-1])
+        sti = float(window["short_term_investments"].iloc[-1])
+        nibcl = float(window["nibcl"].iloc[-1])
+        goodwill_intangibles = float(window["goodwill_intangibles"].iloc[-1])
         if assets == 0:
+            continue
+        invested_capital = assets - cash - sti - nibcl - goodwill_intangibles
+        if invested_capital <= 0:
             continue
 
         source = max(window["source"], key=lambda s: _SOURCE_RANK[s])
+        nibcl_source = max(window["nibcl_source"], key=lambda s: _NIBCL_SOURCE_RANK[s])
+        goodwill_source = max(window["goodwill_source"], key=lambda s: _GOODWILL_SOURCE_RANK[s])
         obs.append({
-            "period_end":   q.at[i, "period_end"],
-            "revenue":      rev_ttm,
-            "cogs":         cogs_ttm,
-            "total_assets": assets,
-            "gp_ratio":     (rev_ttm - cogs_ttm) / assets,
-            "freq":         "Q",
-            "source":       source,
+            "period_end":             q.at[i, "period_end"],
+            "revenue":                rev_ttm,
+            "cogs":                   cogs_ttm,
+            "total_assets":           assets,
+            "cash":                   cash,
+            "short_term_investments": sti,
+            "nibcl":                  nibcl,
+            "nibcl_source":           nibcl_source,
+            "goodwill_intangibles":   goodwill_intangibles,
+            "goodwill_source":        goodwill_source,
+            "invested_capital":       invested_capital,
+            "gp_ratio":               (rev_ttm - cogs_ttm) / invested_capital,
+            "freq":                   "Q",
+            "source":                 source,
         })
     return obs
 
@@ -536,7 +834,9 @@ def fetch_ticker_fundamentals(ticker: str, force: bool = False) -> "pd.DataFrame
     Fetch (or load cached) fundamental observations for one ticker.
 
     Returns a DataFrame with columns [period_end, revenue, cogs, total_assets,
-    gp_ratio, freq, source, low_confidence_vs_yfinance], or an empty
+    cash, short_term_investments, nibcl, nibcl_source, goodwill_intangibles,
+    goodwill_source, invested_capital, gp_ratio, freq, source,
+    low_confidence_vs_yfinance, high_confidence_pre_2021], or an empty
     DataFrame if the ticker has no usable data (no resolvable CIK, no XBRL
     companyfacts, or no period with enough tagged data to build an
     observation) — never raises for a single bad ticker; retries transient

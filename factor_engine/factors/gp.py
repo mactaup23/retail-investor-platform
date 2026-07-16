@@ -1,9 +1,29 @@
 """
 GP (Gross Profitability) factor — proprietary quintile long/short construction.
 
-Novy-Marx (2013) specification
--------------------------------
-    GP_ratio = (Revenue - COGS) / Total Assets
+Novy-Marx (2013) specification, invested-capital refinement
+--------------------------------------------------------------
+    GP_ratio = (Revenue - COGS) / (Total Assets - Cash - Short-Term
+                                    Investments - NIBCL - Goodwill
+                                    - Intangible Assets)
+
+NIBCL (Non-Interest-Bearing Current Liabilities) = Accounts Payable +
+Accrued Liabilities, not short-term debt — see factor_engine/gp_fundamentals.py
+module docstring for tag-level detail and empirical coverage. This platform
+divides by invested capital rather than raw Total Assets so that idle cash,
+interest-free supplier financing, and purchased (acquisition) goodwill
+aren't counted as capital the business had to deploy to earn its gross
+profit — the original Total-Assets-only version penalized capital-light,
+high-cash names (AAPL, MSFT) relative to capital-intensive ones, and didn't
+credit efficient negative-working-capital retailers (KR) for what is a
+genuine efficiency, not a flaw. The Goodwill/Intangibles deduction was added
+after a read-only balance-sheet diagnostic found MSFT carries goodwill +
+intangibles at ~20% of total assets versus ~7% for AAPL/KR — roughly 3x,
+tracing to MSFT's acquisition history (Activision Blizzard, LinkedIn,
+Nuance, GitHub) rather than organic operations. See
+factor_engine/gp_fundamentals.py module docstring for the goodwill/
+intangibles tag coverage and the AAPL-specific tagging gap (Apple stopped
+separately disclosing Goodwill as a discrete XBRL fact after 2017).
 
 Novy-Marx's central finding: gross profitability is at least as powerful a
 predictor of the cross-section of returns as traditional value metrics, and
