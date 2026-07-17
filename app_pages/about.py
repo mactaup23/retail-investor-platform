@@ -885,6 +885,65 @@ denominator (TTM FCF ÷ TTM Revenue) for consistency.
 
 # ---------------------------------------------------------------------------
 
+st.subheader("DCF valuation engine — a known limitation for mega-cap, wide-moat names")
+
+st.markdown("""
+The platform's discounted cash flow engine (`dcf/`) projects unlevered free cash flow
+forward 10 years per ticker, using SEC EDGAR XBRL fundamentals, a WACC built from this
+platform's own factor-model beta (CAPM), and a Gordon Growth terminal value fading to the
+current 10-year Treasury yield. It reports three explicit Bull/Base/Bear scenarios rather
+than a single point estimate or a Monte Carlo distribution — three labelled, explainable
+cases are a more honest framing than sampling from an assumed distribution that would itself
+just be a guess.
+
+**Sanity-checking this engine against real names surfaced an important limitation worth
+stating plainly: single-stage DCF is known, in real institutional equity-research practice,
+to be less reliable for mega-cap, wide-moat companies — not because of an implementation
+bug, but because of how the mechanics of terminal value interact with those companies'
+economics.**
+
+| Ticker | Base case vs. current price | % of value from terminal value |
+|--------|------------------------------|--------------------------------|
+| AAPL   | -54%                         | 60% |
+| MSFT   | -39%                         | 63% |
+| KO     | +35%                         | 81% |
+| NVDA   | -44% (base) / -11% (bull)    | 50-53% |
+
+*(figures reflect market prices as of mid-2026 and will drift day to day — the pattern
+described below, not these specific percentages, is the durable finding.)*
+
+Why this happens: a 10-year explicit forecast plus a Gordon Growth terminal value routinely
+puts 50-80%+ of total value in the terminal value term for almost any company — that alone
+isn't unique to mega-caps (KO's own terminal-value share is the highest of the four names
+above, and its DCF result isn't in question). What's specific to mega-cap, wide-moat
+companies is that this terminal value is driven by a *single* long-term growth assumption
+(here, the current risk-free rate) applied uniformly to every company — and near-term
+explicit cash flows, the part of a DCF that's actually reliably projectable from a company's
+own reported financials, represent a comparatively small share of total value for a business
+whose market price may be reflecting a continued competitive moat, real optionality, or
+capital-allocation flexibility (e.g. large ongoing share buybacks compounding per-share
+value in a way an enterprise-value DCF doesn't model) extending well past a decade-then-fade
+story.
+
+Checking this against real data (not just theory) found two genuinely different pictures for
+AAPL and MSFT specifically: Wall Street's own analyst consensus price target is *also*
+modestly below AAPL's current price (partial, weaker agreement with this model's direction),
+but the *entire* analyst consensus range for MSFT sits above where this model lands — a
+real, evidenced divergence, not a hand-wave. See CLAUDE.md's DCF Valuation Engine section for
+the full investigation.
+
+**Practical recommendation: read this engine's output alongside relative valuation (peer
+multiples / comps — see Pre-Launch Polish List) for mega-cap names specifically, rather than
+as a standalone verdict.** This mirrors how DCF is actually used in institutional equity
+research — one input among several (DCF, comps, precedent transactions, sum-of-the-parts),
+with each tool's reliability understood to vary systematically by company type, not a single
+number treated as ground truth. This platform's DCF is on firmer ground for the "boring,
+stable compounder" case (see KO above) than for a business whose value is dominated by
+long-duration growth optionality.
+""")
+
+# ---------------------------------------------------------------------------
+
 st.subheader("Data sources and limitations")
 
 st.markdown("""

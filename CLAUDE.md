@@ -369,6 +369,158 @@ intersection this test had to restrict to. The honest reading is that these two 
 currently work better run separately than combined. **Not wired into `FinalSignal`** — kept
 as a second standalone diagnostic alongside PEAD, same status.
 
+## DCF Valuation Engine
+
+A fourth independent research pillar (`dcf/` package), alongside factor_engine/,
+smart_money/, and pead/ — projects unlevered free cash flow forward per-ticker and compares
+the resulting per-share intrinsic value range to current market price. Feeds a valuation
+badge into the Discovery/Watchlist signal cards and the existing Valuation tab
+(app_pages/signals.py), alongside its current trading-multiples/FCF-yield/analyst-consensus
+content.
+
+**Data source: SEC EDGAR XBRL, reusing the GP factor's cache, not yfinance.** For any ticker
+already in the GP universe, pulling the additional concepts DCF needs (EBIT, D&A, capex,
+interest expense, total debt, effective tax rate, diluted shares — see dcf/fundamentals.py)
+costs zero new EDGAR calls: it reads the same already-cached raw companyfacts JSON
+(data/gp/xbrl_raw/{cik}.json) GP's own fetch populated, plus new tag-parsing logic. Revenue
+and cash are read directly from GP's own cached fundamentals CSV rather than re-derived.
+yfinance's ~5yr annual / ~5-quarter statement ceiling (documented under Module 2's GP factor
+migration) was the deciding factor against using it here: 5 years of lookback is right at
+that ceiling with zero cushion; XBRL clears it comfortably.
+
+**FCF construction (approved simplification, stated explicitly, not silent):**
+`FCF = EBIT x (1 - effective_tax_rate) + D&A - Capex`. Working-capital changes are NOT
+modeled — a granular NWC build-up would inherit the same AP/accrued-liabilities XBRL
+tag-coverage gaps the GP factor's NIBCL work already found (only 76%/65% standalone
+coverage, 20% resolving neither). EBIT margin, D&A%, and capex% are each a blended 60% TTM /
+40% trailing-3-year-average baseline, held flat across the full 10-year projection — one
+blend per ratio, not a second fade curve stacked on top of the growth fade.
+
+**Growth**: Year-1 growth = the company's own trailing 5-year revenue CAGR, clamped to
+[-15%, +30%] to prevent one distortive year from being extrapolated indefinitely (same
+discipline as PEAD's dollar-based SUE standardization). Linearly faded to a terminal growth
+rate by year 10. Terminal growth = the current 10-year US Treasury yield
+(dcf/wacc.py::fetch_risk_free_rate()) — a new fetch, deliberately distinct from the
+platform's existing short-duration Ken French/^IRX RF used in factor regressions
+(french_data.py), since a 10yr+ DCF cash flow stream should be discounted/faded against a
+duration-matched rate, not a 3-month bill.
+
+**WACC**: cost of equity via CAPM, reusing Module 1's own beta
+(dashboard.factor.ticker_ff3_profile) rather than a second beta computation. Cost of debt =
+interest expense / total debt, after-tax — deliberately simple for v1 (equity value is far
+more sensitive to cost of equity than cost of debt in a properly-weighted WACC). Weighted by
+market-cap equity / book-value total debt.
+
+**Bull/Base/Bear, not Monte Carlo**: three explicit, labeled scenarios varying Year-1
+growth — sampling from an assumed probability distribution would itself just be a guess,
+implying false statistical rigor this model doesn't have.
+
+**Clamp-collapse bug found and fixed.** Bull/bear originally derived their spread by adding
+GROWTH_SPREAD to the already-clamped base growth value, reusing base's own clamp ceiling.
+For a name whose raw growth already exceeds that ceiling — NVDA: 66.9% raw unclamped 5-year
+revenue CAGR against a 30% base ceiling — base saturates at 30%, and bull (30% + 5pp,
+reclamped to the same 30% ceiling) collapsed onto it: no bull/base differentiation for
+exactly the highest-growth names, where a reader would most want to see the bull case
+reasoned through. A purely proportional/multiplicative fix (bull = base x 1.3) was
+considered and rejected: it has a real correctness problem, not just a stylistic one — for a
+negative or near-zero base growth rate, multiplying by a factor > 1 either inverts the
+direction (-5% x 1.3 = -6.5%, making "bull" *worse* than base) or barely moves. Fixed by
+deriving the spread from the RAW unclamped CAGR (not the clamped base) and giving bull/bear
+their own wider clamp bands (`BULL_GROWTH_CLAMP_MAX` / `BEAR_GROWTH_CLAMP_MIN`, +/-15pp
+beyond the base band) — stays additive (simple, sign-robust) but fixes the actual bug. NVDA
+now shows bear=base=30% (there is no more-bearish story the data supports — even
+raw-minus-spread is still above the base ceiling) and bull=45% (genuinely differentiated,
+reaching toward but still well below its true trailing growth).
+
+**Business-model exclusions (`dcf/exclusions.py`) — different mechanism from GP's REIT/
+insurer exclusions.** Banks, insurers, and REITs are excluded via live GICS sector/industry
+classification (yfinance's `info` dict: `Financial Services`+`Bank`/`Insurance`, or
+`Real Estate`+`REIT`), not a hand-maintained ticker list. GP's exclusions
+(factor_engine/gp_exclusions.py) are a DATA-AVAILABILITY problem — no COGS-equivalent XBRL
+concept exists at all for these business models. DCF's is a METHODOLOGICAL-VALIDITY
+problem: EBIT resolves just fine for a bank, insurer, or REIT, so the engine would happily
+produce a per-share number — that number would be conceptually invalid, which is worse than
+missing data, since it's indistinguishable from a valid result. Bank capital structure is
+regulatory- (Basel), not market-driven, breaking the CAPM/WACC framing; insurer float and
+claims reserves function as operating and financing leverage simultaneously; REITs must
+distribute ~90% of taxable income (breaking the "reinvest FCF for growth" framing) and their
+large D&A doesn't track real economic depreciation of often-appreciating property. Standard
+practice for all three is DDM/embedded-value/FFO-based valuation, not enterprise DCF.
+Confirmed empirically (scripts/run_dcf_sanity.py) that GICS classification correctly
+excludes JPM (bank) / MET (insurer) / O (REIT) while correctly NOT excluding UNH — a "health
+insurer" colloquially, but GICS-classified Healthcare/Healthcare Plans, not Financial
+Services, since its economics don't share banks/insurers' regulatory-capital-structure
+problem.
+
+**Two real XBRL tag bugs found and fixed during sanity testing**, both the same "filer
+changes or drops a tag over time" pattern the GP factor's own docstring already documents
+for Revenue (ASC 606 adoption wave) and Goodwill (AAPL stopped tagging it after 2017):
+- Diluted shares outstanding resolved to nothing for every ticker — XBRL reports share
+  counts under `units.shares`, not `units.USD`; the GP-factor helper reused for tag
+  resolution only checks `units.USD`. Fixed with a local `_shares_facts_by_tag` helper
+  rather than generalizing the shared GP helper (every other tag here is genuinely
+  USD-denominated).
+- AAPL's interest expense silently defaulted to $0, making its cost of debt come out as
+  0.00% despite $90.68B of real debt. Root cause: AAPL's `InterestExpense`/
+  `InterestExpenseDebt` XBRL tags have no entries after FY2023 — Apple folded interest
+  expense into "Other income/expense, net" starting FY2024, the same kind of disclosure
+  change as its Goodwill tag dropping off in 2017. Fixed with a carry-forward-with-
+  source-flag (`interest_expense_source: reported | carried_forward | none`) rather than a
+  silent zero, mirroring the `debt_source`/`tax_rate_source` pattern already used elsewhere.
+- KO showed $0 total debt despite $1.65B of reported interest expense — implausible on its
+  face, and confirmed as a real gap: KO switched XBRL tags in 2025 from
+  `LongTermDebtNoncurrent`/`ShortTermBorrowings` to lease-inclusive
+  `LongTermDebtAndCapitalLeaseObligations*`/`OtherShortTermBorrowings`. Fixed by adding the
+  new-era tags as fallbacks in the existing per-period tag-priority resolution (same
+  mechanism gp_fundamentals.py already uses for Revenue's ASC-606-era tag switch).
+
+**Known limitation — terminal value dominance is a well-documented limitation of
+single-stage DCF for mega-cap, wide-moat companies, not a bug in this implementation.**
+Sanity-check results across real portfolio/watchlist holdings (AAPL, MSFT — real portfolio
+positions; KO — mature slow-grower control; NVDA — real portfolio + watchlist "stretched
+valuation" candidate), figures as of the sanity run and will drift with market prices:
+
+| Ticker | Base case vs. current price | % of value from terminal value |
+|--------|------------------------------|--------------------------------|
+| AAPL   | -54%                         | 60% |
+| MSFT   | -39%                         | 63% |
+| KO     | +35%                         | 81% |
+| NVDA   | -44% base / -11% bull        | 50-53% |
+
+High terminal-value share (50-81% here) is not, by itself, unique to mega-caps — it's a
+normal property of any 10-year DCF, and KO's own TV share is the highest of the four despite
+its result matching intuition cleanly. What IS specific to mega-cap, wide-moat companies is
+that this same structural TV-dependency interacts with a terminal growth rate deliberately
+capped at a conservative risk-free-rate proxy (see Growth above) applied uniformly to every
+company — while near-term explicit cash flows (the part of a DCF that's actually reliably
+projectable from a company's own reported financials) are a comparatively small share of
+total value for a business whose market price may reflect continued competitive moat, real
+optionality, or capital-allocation flexibility (e.g. buyback-driven per-share compounding an
+enterprise-value DCF doesn't model) extending well past a decade-then-fade-to-GDP story.
+
+Checked against real data, not just theory: analyst consensus price targets (yfinance) for
+AAPL sit modestly below current price too ($315.79 mean vs. $332.51 current) — a partial,
+weaker echo of this model's direction, and a reverse-solve found even generous
+analyst-forward growth estimates (21.8% earnings growth) fall well short of the ~30% growth
+this model would need to match AAPL's current price, so the gap here looks more like a
+genuine structural limitation (no buyback modeling) than an overly conservative assumption.
+MSFT's picture is different and more concerning: the *entire* analyst consensus range
+($400-$870) sits above where this model lands ($240.60) — a real, evidenced divergence, not
+a hand-wave. The reverse-solve here is more diagnostic: MSFT's forward consensus growth
+(18.3% revenue / 23.4% earnings) is meaningfully higher than this model's 14.5%
+trailing-5yr-CAGR-based assumption, which is diluted by pre-AI-acceleration years and misses
+a real recent inflection; compounding this, MSFT's capex-of-revenue baseline (21%, reflecting
+current AI infrastructure buildout) is held flat for the full 10-year projection, a
+meaningfully conservative choice for capex intensity that's widely expected to at least
+partially normalize rather than persist a full decade.
+
+**Practical recommendation: read this engine's output alongside relative valuation (peer
+multiples / comps) for mega-cap names specifically, rather than as a standalone verdict** —
+see the new Pre-Launch Polish List item below. This mirrors real institutional equity
+research practice: DCF is one input among several (DCF, comps, precedent transactions,
+sum-of-the-parts), each understood to carry different reliability by company type, not a
+single number treated as ground truth.
+
 ## Module 5 — Tax-Lot Engine
 
 taxlot.py ingests Fidelity/Schwab/IBKR/generic CSV exports. Supports FIFO/LIFO/MIN_TAX/SPEC_ID lot selection. Flags wash-sale risk (retrospective disallowed + prospective warning). Persists to TaxLot table.
@@ -425,3 +577,7 @@ TaxLot
 11. Dashboard error handling and graceful degradation
 12. README and methodology documentation
 13. CLAUDE.md update after dashboard is built
+14. Completed — DCF valuation engine (`dcf/`); see full section above
+15. Relative valuation / comps (peer trading multiples) — recommended companion to the DCF
+    engine for mega-cap names specifically, where single-stage DCF's terminal-value
+    dependency is least reliable (see DCF Valuation Engine section above)

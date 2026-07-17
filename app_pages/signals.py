@@ -35,6 +35,7 @@ from dashboard.db import (
     watchlist_remove,
 )
 from dashboard.factor import current_portfolio_betas, ticker_ff3_profile
+from dashboard.valuation import ticker_dcf_valuation
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -62,6 +63,23 @@ _TREND_COLOR = {
 }
 
 _DISC_MAX_CARDS = 60
+
+# DCF valuation badge — dead-zone band around 0% upside maps to "Fair Value"
+# rather than a precise-looking Undervalued/Overvalued split. Deliberately
+# wide (+/-10%) given how sensitive DCF outputs are to assumptions (see
+# CLAUDE.md's DCF Valuation Engine section) — a narrower band would imply
+# more precision than a single-stage DCF actually supports.
+_VALUATION_DEADZONE_PCT = 10.0
+
+_VALUATION_ERROR_LABELS = {
+    "unsuitable_business_model": "not a DCF fit",
+    "no_xbrl_fundamentals":      "no fundamentals data",
+    "insufficient_history":      "insufficient history",
+    "no_diluted_shares":         "no share-count data",
+    "no_beta":                   "no beta available",
+    "no_market_data":            "no market data",
+    "unexpected_failure":        "valuation unavailable",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -128,6 +146,42 @@ def _render_nlp_inline(nlp_available: bool, nlp_score: float | None) -> None:
         return
     color = _nlp_color(nlp_score)
     st.caption(f"NLP: :{color}[{nlp_score:+.3f}]")
+
+
+def _valuation_badge_info(upside_pct: float | None) -> tuple[str, str]:
+    """Return (label, streamlit_color) for a DCF base-case upside/downside percentage."""
+    if upside_pct is None:
+        return "—", "gray"
+    if upside_pct >= _VALUATION_DEADZONE_PCT:
+        return "Undervalued", "green"
+    if upside_pct <= -_VALUATION_DEADZONE_PCT:
+        return "Overvalued", "red"
+    return "Fair Value", "gray"
+
+
+def _render_valuation_inline(ticker: str | None) -> None:
+    """
+    DCF valuation badge — base-case upside/downside vs. current price, in
+    the same colored-label + percentage style as the conviction badge
+    (_render_score_cell). Full-width caption, mirrors _render_nlp_inline's
+    placement in the card. Computed lazily and cached 24h per ticker
+    (dashboard.valuation.ticker_dcf_valuation) — not precomputed for every
+    card on the page.
+    """
+    if not ticker:
+        st.caption(":gray[Valuation: N/A]")
+        return
+    result = ticker_dcf_valuation(ticker)
+    if "error" in result:
+        label = _VALUATION_ERROR_LABELS.get(result["error"], result["error"])
+        if result["error"] == "unsuitable_business_model" and result.get("reason"):
+            label = f"not a DCF fit ({result['reason']})"
+        st.caption(f":gray[Valuation: {label}]")
+        return
+    upside = result["scenarios"]["base"]["upside_pct"]
+    label, color = _valuation_badge_info(upside)
+    upside_str = f" {upside:+.0f}%" if upside is not None else ""
+    st.caption(f"Valuation: :{color}[**{label}**{upside_str}]")
 
 
 # ---------------------------------------------------------------------------
@@ -705,6 +759,63 @@ def _render_valuation_tab(ticker: str, info: dict) -> None:
         st.markdown("  ·  ".join(parts))
     elif not rec_label:
         st.caption(":gray[No analyst consensus data available]")
+
+    st.markdown("---")
+
+    # ── Intrinsic Value (DCF) ──────────────────────────────────────────────
+    st.markdown("**Intrinsic Value (DCF)**")
+    dcf_result = ticker_dcf_valuation(ticker)
+
+    if "error" in dcf_result:
+        label = _VALUATION_ERROR_LABELS.get(dcf_result["error"], dcf_result["error"])
+        if dcf_result["error"] == "unsuitable_business_model" and dcf_result.get("reason"):
+            reason = dcf_result["reason"]
+            reason_text = {
+                "bank": "standard unlevered-FCF DCF is a poor fit for banks — capital "
+                        "structure is regulatory- rather than market-driven, and interest "
+                        "income/expense is the core operating business, not a financing cost.",
+                "insurer": "standard unlevered-FCF DCF is a poor fit for insurers — float "
+                           "and claims reserves function as operating and financing leverage "
+                           "simultaneously.",
+                "reit": "standard unlevered-FCF DCF is a poor fit for REITs — they must "
+                        "distribute ~90% of taxable income, and D&A doesn't track real "
+                        "economic depreciation of (often appreciating) property.",
+            }.get(reason, "")
+            st.caption(f":gray[Not shown — {reason_text}]")
+        else:
+            st.caption(f":gray[Not available — {label}]")
+    else:
+        bear, base, bull = (dcf_result["scenarios"][k] for k in ("bear", "base", "bull"))
+        dcf_c1, dcf_c2, dcf_c3 = st.columns(3)
+        for col, sc in zip((dcf_c1, dcf_c2, dcf_c3), (bear, base, bull)):
+            with col:
+                st.markdown(f":gray[{sc['scenario'].upper()}]")
+                st.markdown(f"### \\${sc['per_share']:.2f}")
+                up = sc["upside_pct"]
+                if up is not None:
+                    up_col = "green" if up >= 0 else "red"
+                    st.caption(f":{up_col}[{up:+.1f}% vs current]")
+
+        pct_tv = base["pct_from_terminal_value"]
+        st.caption(
+            f"WACC {dcf_result['wacc'] * 100:.1f}%  ·  "
+            f"{pct_tv * 100:.0f}% of base-case value from terminal value  ·  "
+            "read alongside peer trading multiples for mega-cap names — "
+            "single-stage DCF is known to be less reliable where terminal value "
+            "dominates (see About page)."
+        )
+        with st.expander("ℹ️ Methodology and limitations"):
+            st.caption(
+                "Unlevered FCF = EBIT × (1 − effective tax rate) + D&A − Capex. "
+                "Working-capital changes are not modeled (assumed zero). EBIT margin, "
+                "D&A%, and capex% are held flat across the 10-year projection at a "
+                "blended 60% TTM / 40% trailing-3-year baseline. Year-1 growth is the "
+                "company's own trailing 5-year revenue CAGR (clamped to avoid "
+                "extrapolating one distortive year), linearly faded to the current "
+                "10-year Treasury yield by year 10. Bull/Base/Bear are three explicit "
+                "scenarios, not a Monte Carlo distribution. See About page for the full "
+                "methodology and the mega-cap terminal-value limitation."
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -1513,8 +1624,9 @@ def _render_card(
                         st.toast(f"Added {display} to watchlist")
                         st.rerun()
 
-        # Full-width: NLP badge + signal drivers
+        # Full-width: NLP badge + DCF valuation badge + signal drivers
         _render_nlp_inline(row.get("nlp_available", False), row.get("nlp_composite_score"))
+        _render_valuation_inline(ticker)
         if row.get("signal_drivers"):
             st.caption(f":material/info: {row['signal_drivers']}")
         if row.get("note"):
