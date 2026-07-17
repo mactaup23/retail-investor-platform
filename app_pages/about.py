@@ -733,6 +733,93 @@ taxes.
 
 # ---------------------------------------------------------------------------
 
+st.subheader("Composite signal — does combining 13F + PEAD help?")
+
+st.markdown("""
+With two genuinely independent signals in hand, the natural next question is whether blending
+them produces something stronger than either alone. This section covers that test —
+`scripts/run_composite_backtest.py` — and its answer, which is more qualified than a clean yes.
+
+**Combination method.** A fixed 50/50 average of each signal's percentile rank, computed within
+each quarter's paired cohort — deliberately *not* a regression-fit or IC-proportional weighting.
+Fitting weights on a dataset this size, for a combination test layered on top of two signals
+already validated under this project's "don't chase a baseline you can't reproduce" discipline
+(see the +0.061 IC investigation above and the EDGAR-extension close-out for PEAD), would risk
+overfitting the blend itself rather than measuring anything real. A 50/50 average has zero
+parameters estimated from this backtest's own data.
+
+**Universe and timing.** The two signals don't share a universe or a clock, so both had to be
+reconciled before any score could be compared:
+
+- *Universe*: the intersection of tickers with a resolved ticker in that quarter's
+  `ConvergenceScore` and tickers with a scoreable PEAD event — 1,432 tickers, 58,185 paired
+  (quarter, ticker) observations across the same 48 quarters (2014Q2–2026Q1) used for PEAD's
+  own primary window. A ticker with only one of the two scores is excluded from that quarter
+  entirely; no imputation.
+- *Timing*: each 13F period's signal isn't knowable until `period + 45 days`; each PEAD event
+  is paired to the most recent one that was already knowable by that date. The forward-return
+  window for **all three** variants below (13F-alone, PEAD-alone, composite) starts from
+  `max(13F knowledge_date, PEAD entry_date)` — the later of the two — so the comparison isolates
+  the effect of the *score*, not a difference in when the return clock starts.
+
+**A staleness bug found and fixed.** The first pass paired each quarter to the *most recent
+knowable* PEAD event with no floor on how recent "recent" had to be. For a handful of
+thinly-covered tickers (BFS, UVV) with almost no scoreable yfinance earnings history, that
+silently fell back to a single announcement from **2008 or 2012** and reused it as the paired
+score across dozens of unrelated later quarters — a stale, essentially meaningless pairing, not
+a real signal. Fixed with a 120-day cap (roughly one quarter of slack past knowledge_date): if
+the only "knowable" event is staler than that, the pairing is dropped rather than used. Only
+~1.5% of raw pairs exceeded 120 days (median gap was 17 days), so the fix barely moved the
+aggregate numbers — but it was wrong before the cap existed, the same "exclude rather than
+fabricate" standard applied everywhere else in this project.
+
+**Corrected results:**
+
+| Horizon | Variant | Mean IC | t-stat | Hit rate |
+|---|---|---|---|---|
+| 1-month | 13F-alone | +0.0060 | 0.89 | 50.0% |
+| 1-month | PEAD-alone | +0.0062 | 0.82 | 54.2% |
+| 1-month | **Composite** | **+0.0089** | **1.33** | 58.3% |
+| 3-month | 13F-alone | +0.0064 | 1.05 | 51.1% |
+| 3-month | PEAD-alone | +0.0083 | 1.44 | 66.0% |
+| 3-month | **Composite** | **+0.0101** | **1.77** | 61.7% |
+
+The composite beats both individually-recomputed baselines on t-stat at both horizons — not
+just point IC, the bar this project has held every other backtest to. But t = 1.33–1.77 sits
+close to, not clearly past, the pre-committed decision-gate language used elsewhere on this
+platform (t-stat 1.5–2.0) — closest at the 3-month horizon, short of it at 1-month.
+
+**Why both individual baselines look weaker here than their own documented figures.** 13F-alone
+recomputed at ~0.006 vs. its usual ~0.008; PEAD-alone recomputed at ~0.006–0.008 vs. its own
+2014Q2+ primary result of +0.02. This is not a red flag — it reflects two structural properties
+of this specific test, not a data problem:
+
+1. **The intersection universe filters out exactly where PEAD is strongest.** PEAD's drift is
+   classically stronger in smaller, less-analyst-covered names; the 13F intersection skews
+   toward larger, actively institutionally-traded names by construction (a fund made a
+   convergence-worthy move in it that quarter). Requiring both signals narrows the universe
+   toward the names where PEAD's edge is weakest.
+2. **The shared entry timing delays PEAD's entry past its own tighter natural window.** The
+   13F 45-day knowledge lag is the binding constraint on the shared entry anchor 99.7% of the
+   time (median 17 days after the actual earnings date) — later than PEAD's own entry_date,
+   likely after some of the drift has already played out.
+
+**Conclusion.** Combining the two signals doesn't destroy value on this harder, overlap-only
+subset — the composite is a real, if modest, improvement over each signal's own performance
+under the same constraints. But this is not evidence that blending would lift the *production*
+pipeline's overall IC: both signals individually look stronger on their own broader, natural
+universes (13F's full `ConvergenceScore` cross-section, PEAD's full ~1,500-ticker universe)
+than either does on the narrow intersection this test had to restrict to. The honest reading is
+that these two signals currently work better run separately than combined — not blended into
+`FinalSignal`, kept as a second standalone diagnostic alongside PEAD.
+
+**Past performance does not guarantee future results.** As with every backtest on this page,
+these figures reflect one historical sample, universe, and weighting scheme, and do not
+account for transaction costs, slippage, or taxes.
+""")
+
+# ---------------------------------------------------------------------------
+
 st.subheader("Module 5 — tax-lot engine")
 
 st.markdown("""

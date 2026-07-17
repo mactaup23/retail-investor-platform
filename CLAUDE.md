@@ -295,6 +295,80 @@ industry-wide, not a gap specific to either vendor — **yfinance's ~10-12yr dep
 practical free ceiling for this signal.** Alpha Vantage's paid tier ($49.99/mo) is a
 documented, available option if circumstances change later; not pursued now.
 
+## Composite Signal — 13F + PEAD Combination Test (standalone diagnostic, not wired in)
+
+`scripts/run_composite_backtest.py` — tests whether combining the 13F skill-weighted
+convergence signal (`ConvergenceScore.convergence_score`) and PEAD's SUE score produces
+stronger predictive power than either alone. Motivated by the same "genuinely independent
+signals" logic that produced PEAD in the first place.
+
+**Combination method: fixed 50/50 average of percentile ranks, not a fitted weighting.**
+Ranks computed within each quarter's paired cohort. Deliberately not a regression-fit or
+IC-proportional weighting — fitting weights on this dataset would risk overfitting the
+blend itself, the same discipline already applied to the FF4-vs-FF7 decision above and to
+not chasing the +0.061 baseline. Zero parameters estimated from this backtest's own data.
+
+**Universe alignment.** Intersection of tickers with a resolved ticker in that quarter's
+`ConvergenceScore` and tickers with a scoreable PEAD event — 1,432 tickers, 58,185 paired
+(quarter, ticker) observations across 48 quarters (2014Q2-2026Q1, matching PEAD's own
+primary window). A ticker with only one of the two scores is excluded from that quarter
+entirely — no imputation, same philosophy as every other coverage gate in this codebase.
+
+**Timing alignment.** 13F signal for `period` isn't knowable until `period + 45 days`
+(`smart_money/backtest.py::knowledge_date`). Each (period, ticker) is paired to the most
+recent PEAD event already knowable by that date (`pead/backtest.py::entry_date`). The
+forward-return window for all three backtest variants (13F-alone, PEAD-alone, composite)
+starts from `max(13F knowledge_date, PEAD entry_date)` — the later of the two — so the
+comparison isolates the effect of the score, not a difference in when the return clock
+starts. This shared-anchor choice is specific to this comparison; it does not change either
+signal's own canonical standalone backtest (`smart_money/backtest.py`, `pead/backtest.py`).
+
+**Staleness bug found and fixed — 120-day cap on PEAD pairing.** The first pass paired each
+quarter to the *most recent knowable* PEAD event with no floor on recency. A handful of
+thinly-covered tickers (BFS, UVV) have almost no scoreable yfinance earnings history, so
+pairing silently fell back to a single announcement from 2008/2012 and reused it across
+dozens of unrelated later quarters — a stale, meaningless pairing. Fixed with a 120-day cap
+(~1 quarter of slack past knowledge_date): if the only knowable event is staler than that,
+the pairing is dropped (`_MAX_PAIRING_STALENESS_DAYS` in the script). Only ~1.5% of raw
+pairs exceeded 120 days (median gap 17 days), so the fix barely moved the aggregate numbers
+— but it was wrong before the cap existed, the same "exclude rather than fabricate"
+standard as PEAD's own `no_estimate` exclusion.
+
+**Corrected result:**
+
+| Horizon | Variant | Mean IC | t-stat | Hit rate |
+|---|---|---|---|---|
+| 1-month | 13F-alone | +0.0060 | 0.89 | 50.0% |
+| 1-month | PEAD-alone | +0.0062 | 0.82 | 54.2% |
+| 1-month | Composite | +0.0089 | 1.33 | 58.3% |
+| 3-month | 13F-alone | +0.0064 | 1.05 | 51.1% |
+| 3-month | PEAD-alone | +0.0083 | 1.44 | 66.0% |
+| 3-month | Composite | +0.0101 | 1.77 | 61.7% |
+
+Composite beats both individually-recomputed baselines on t-stat at both horizons — the
+pre-committed success bar (point IC alone is not sufficient given how much this project's
+other backtests have moved on noise; see the +0.061 investigation). But t = 1.33-1.77 sits
+close to, not clearly past, the decision-gate language used elsewhere (t-stat 1.5-2.0) —
+closest at 3-month, short at 1-month.
+
+**Both individual baselines are weaker here than their own documented standalone
+figures** (13F ~0.006 vs. its usual ~0.008; PEAD ~0.006-0.008 vs. its 2014Q2+ primary
++0.02) — not a red flag, but a structural consequence of this test's constraints, not a
+data problem:
+1. The intersection universe filters toward exactly where PEAD is weakest: PEAD's drift is
+   classically stronger in smaller, less-analyst-covered names, while the 13F intersection
+   skews toward larger, actively institutionally-traded names by construction.
+2. The shared entry timing delays PEAD's entry past its own tighter natural window — the
+   13F 45-day lag is the binding constraint on the shared anchor 99.7% of the time (median
+   17 days after the actual earnings date), likely after some drift has already played out.
+
+**Conclusion: combination doesn't destroy value on this harder overlap subset, but is not
+evidence that blending would lift the production pipeline's IC.** Both signals individually
+look stronger on their own broader, natural universes than either does on the narrow
+intersection this test had to restrict to. The honest reading is that these two signals
+currently work better run separately than combined. **Not wired into `FinalSignal`** — kept
+as a second standalone diagnostic alongside PEAD, same status.
+
 ## Module 5 — Tax-Lot Engine
 
 taxlot.py ingests Fidelity/Schwab/IBKR/generic CSV exports. Supports FIFO/LIFO/MIN_TAX/SPEC_ID lot selection. Flags wash-sale risk (retrospective disallowed + prospective warning). Persists to TaxLot table.
