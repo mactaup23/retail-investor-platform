@@ -199,6 +199,102 @@ NLP scorer (nlp.py): claude-sonnet-4-6 via Batch API (asynchronous, 50% cheaper)
 
 Signal blending (signal.py): 70% convergence + 30% NLP. Contradiction override: when |conv| >= 0.25 AND |nlp| >= 0.25 AND opposite signs, use (0.85 x conv + 0.15 x nlp) x 0.80. EXIT SIGNAL only fires when a prior FinalSignal row exists for the CUSIP. Always use display_name property (ticker ?? issuer_name) for UI display, never .ticker directly. _SHORT_NAMES dict handles TwoSigma, DEShaw, D1, LightSt.
 
+## PEAD Signal — Post-Earnings-Announcement Drift (new, standalone)
+
+A third independent research pillar (`pead/` package), alongside factor_engine/ and
+smart_money/ — motivated by the Module 3/4 signal-improvement investigation (see
+app_pages/about.py "Path forward") finding the 13F positioning signal had hit its practical
+ceiling. Genuinely independent data domain (earnings surprises, not institutional
+positioning); shares no infrastructure with Module 3/4 beyond backtest methodology. **Not
+yet wired into signal.py's blend** — a standalone diagnostic result.
+
+Universe: same ~1,500-ticker S&P Composite 1500 universe as the GP factor
+(factor_engine/gp_universe.py, reused directly via pead/universe.py — no re-scrape).
+
+Data source: yfinance `Ticker.get_earnings_dates(limit=50)` — pass a high limit explicitly,
+the default limit=12 is shallow (~3yr); empirically most tickers return 40-50 quarters
+(10+yr) of history. Cached per-ticker to data/pead/surprises/*.csv (pead/surprises.py).
+
+SUE (Standardized Unexpected Earnings, Bernard & Thomas 1989/1990) construction
+(pead/signal.py): `(eps_surprise_dollar - mean(prior window)) / stddev(prior window)`,
+standardized against the *dollar* surprise, not percentage (percentage surprise is unstable
+for near-zero consensus estimates — empirically confirmed, e.g. a name swinging between
+-157%/+256% surprise on a $0.02-0.03 estimate). WINDOW=8 trailing quarters (rolling, not
+expanding — avoids blending a company's early/mature volatility regimes). MIN_QUARTERS=4
+(not the more conventional 8) is the floor for when scoring may *start*, deliberately
+loosened given yfinance's shallow-history limitation is already accepted for this pass — do
+not conflate this floor with WINDOW, which is a separate ceiling on how much history feeds
+the std/mean (confirmed intentional, not a bug, after explicit user review). Tickers below
+MIN_QUARTERS fall back to cross-sectional percentile rank of `eps_surprise_pct` within the
+same calendar-quarter cohort (`score_method` column records which path each row took).
+
+Two real yfinance data-quality issues found and handled explicitly (do not "fix" by
+reverting to raw percentage surprise — that's the less robust construction, not a fix):
+(1) yfinance's displayed EPS Estimate/Reported EPS are rounded to 2 decimals, producing a
+spurious zero-variance trailing window for low-EPS stocks (e.g. NVDA 2014-2016) even though
+the underlying Surprise(%) shows real movement — correctly falls back to percentile via the
+std>0 guard, not a crash. (2) A minority of rows have a null eps_estimate but yfinance still
+returns an implausible Surprise(%) anyway (observed: 855%, 7900%, -4813%) — these are
+excluded from scoring entirely (`score_method="no_estimate"`) and from the percentile
+ranking pool, not allowed to pollute it.
+
+Entry timing (pead/backtest.py `entry_date()`): session classified per-row (not per-ticker)
+from yfinance's announcement hour — `bmo` (hour<16 ET, that day's close already reflects the
+news) vs `amc`/`unknown` (hour>=16 ET or missing, next trading day's close is first to
+reflect it — "unknown" defaults conservatively to amc, never risking same-day look-ahead).
+Verified empirically consistent with real-world release patterns before being trusted.
+
+Backtest (pead/backtest.py, mirrors smart_money/backtest.py's Spearman IC / coverage-gate /
+t-stat methodology, grouped by `quarter_cohort` — calendar quarter of announcement date —
+instead of a 13F period, since PEAD events scatter across company fiscal calendars rather
+than sharing one quarter-end grid). Horizons: 21/63 trading days (1mo/3mo) only, per this
+signal's first-pass scope.
+
+**Result (1,500-ticker universe, 70 quarterly cohorts, 1999-2026) — two windows reported,
+2014Q2+ is primary:**
+
+| Window | Horizon | IC | t-stat | Hit rate |
+|--------|---------|-----|--------|----------|
+| 2014Q2+ (primary) | 1mo | +0.0206 | 3.14 | 69.4% |
+| 2014Q2+ (primary) | 3mo | +0.0176 | 2.56 | 69.4% |
+| Full range 1999-2026 | 1mo | +0.0488 | 2.56 | 68.6% |
+| Full range 1999-2026 | 3mo | +0.0251 | 1.79 | 68.6% |
+
+Full-range cohorts from 2009-2013 clear MIN_COHORT_OBS=10 but are computed from only 10-59
+tickers (whichever legacy names have that much yfinance history), not the full universe
+(full coverage starts 2014Q2, 1,000+ tickers/quarter) — this inflates the full-range mean IC
+while widening its variance. Restricting to 2014Q2+ *strengthens* the t-stat despite a lower
+raw IC. **Cite the 2014Q2+ figures as the primary result** — same "don't chase an
+unrepresentative baseline" lesson as the Module 3/4 +0.061 investigation above. Both windows
+clear the pre-committed decision gate (IC 0.02-0.03, t-stat 1.5-2.0). Validated via
+individual-cohort spot-checks (scripts/spotcheck_pead_cohorts.py) — e.g. 2020Q1 (pre-COVID
+crash) showed a *negative* IC because a systematic market shock swamped the idiosyncratic
+surprise effect, while 2020Q2 (COVID recovery) showed a clean positive pattern — real
+per-stock examples, not just the aggregate statistic.
+
+**EDGAR extension investigated and closed — do not re-attempt without a new estimates
+source.** The GP factor's yfinance-to-EDGAR migration raised the obvious question of
+whether PEAD's history could deepen the same way. It structurally cannot: SEC/XBRL data is a
+company's self-disclosure of its own financials (actual EPS confirmed present via
+us-gaap:EarningsPerShareBasic/Diluted in the *already-cached* GP factor companyfacts JSON —
+zero new EDGAR calls needed), but analyst *consensus estimates* are a third-party commercial
+product (I/B/E/S, Zacks, FactSet) with no EDGAR form or XBRL concept, because they aren't
+something the filer reports about itself. A surprise needs both sides for the same quarter,
+so EDGAR alone cannot extend usable history regardless of how it's used.
+
+Two alternative estimate sources were empirically tested (live API calls, not just
+documentation): Alpha Vantage's EARNINGS endpoint returned genuinely deep data (consensus
+estimate, explicit announcement date, explicit pre-market/post-market field, history to
+1996) but its free tier caps at 25 requests/day (~2 months to pull the full ~1,500-ticker
+universe once); a usable rate limit starts at $49.99/month. Financial Modeling Prep (tested
+with a real registered account, not a demo key) has a genuine consensus-estimate field but
+restricts free-tier symbol access to a small mega-cap whitelist — mid/small-cap tickers
+(tested: HELE, CVI, HLX, KR) were rejected outright regardless of wait time, a harder
+blocker than a rate limit. Conclusion: consensus-estimate data is a commercial product
+industry-wide, not a gap specific to either vendor — **yfinance's ~10-12yr depth is the
+practical free ceiling for this signal.** Alpha Vantage's paid tier ($49.99/mo) is a
+documented, available option if circumstances change later; not pursued now.
+
 ## Module 5 — Tax-Lot Engine
 
 taxlot.py ingests Fidelity/Schwab/IBKR/generic CSV exports. Supports FIFO/LIFO/MIN_TAX/SPEC_ID lot selection. Flags wash-sale risk (retrospective disallowed + prospective warning). Persists to TaxLot table.
