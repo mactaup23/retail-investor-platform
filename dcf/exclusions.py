@@ -65,7 +65,8 @@ def check_business_model_fit(ticker: str) -> "str | None":
     """
     try:
         import yfinance as yf
-        info = yf.Ticker(ticker).info
+        from yfinance_client import call_with_backoff
+        info = call_with_backoff(lambda: yf.Ticker(ticker).info)
     except Exception:
         return None
 

@@ -71,13 +71,16 @@ def _fetch_batch(tickers: list[str], start: datetime.date, end: datetime.date) -
     end_excl = end + datetime.timedelta(days=1)
     symbol_map = {t: _to_yfinance_symbol(t) for t in tickers}
 
-    raw = yf.download(
-        list(symbol_map.values()),
-        start=start.isoformat(),
-        end=end_excl.isoformat(),
-        auto_adjust=False,
-        progress=False,
-        threads=True,
+    from yfinance_client import call_with_backoff
+    raw = call_with_backoff(
+        lambda: yf.download(
+            list(symbol_map.values()),
+            start=start.isoformat(),
+            end=end_excl.isoformat(),
+            auto_adjust=False,
+            progress=False,
+            threads=True,
+        )
     )
     if raw.empty:
         return {}

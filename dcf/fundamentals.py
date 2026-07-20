@@ -106,7 +106,7 @@ _LT_DEBT_CURRENT_TAGS = ["LongTermDebtCurrent", "LongTermDebtAndCapitalLeaseObli
 _ST_BORROWINGS_TAGS = ["ShortTermBorrowings", "DebtCurrent", "OtherShortTermBorrowings"]
 
 _EMPTY_SENTINEL = pd.DataFrame({
-    "period_end": [], "revenue": [], "cash": [], "ebit": [], "da": [], "capex": [],
+    "period_end": [], "filed": [], "revenue": [], "cash": [], "ebit": [], "da": [], "capex": [],
     "interest_expense": [], "interest_expense_source": [], "total_debt": [], "debt_source": [],
     "tax_expense": [], "pretax_income": [], "effective_tax_rate": [], "tax_rate_source": [],
     "diluted_shares": [],
@@ -216,10 +216,18 @@ def _build_annual_observations(ticker: str, us_gaap: dict) -> list[dict]:
         revenue_by_end = _revenue_from_xbrl(us_gaap)
         cash_by_end = {}   # no fallback for Cash — periods without it just carry cash=0 (see below)
 
-    ebit_by_end = {
-        end: float(e["val"])
-        for (_s, end), e in _duration_periods(_facts_by_tag(us_gaap, _EBIT_TAGS), _ANNUAL_SPAN_DAYS).items()
-    }
+    ebit_periods = _duration_periods(_facts_by_tag(us_gaap, _EBIT_TAGS), _ANNUAL_SPAN_DAYS)
+    ebit_by_end = {end: float(e["val"]) for (_s, end), e in ebit_periods.items()}
+    # `filed` is the date this period's 10-K was actually public — needed for
+    # point-in-time backtesting (dcf/backtest.py) so a fiscal year's data
+    # isn't treated as knowable the day the fiscal year ends. Sourced from
+    # EBIT's own fact record rather than Revenue's: Revenue mostly comes from
+    # GP's pre-aggregated fundamentals CSV above, which doesn't carry `filed`;
+    # EBIT is always freshly parsed from raw XBRL here and every downstream
+    # observation already requires it present (see the `if end not in
+    # ebit_by_end: continue` guard below), so it's a reliable, already-parsed
+    # source for this date rather than a new fetch.
+    filed_by_end = {end: e.get("filed") for (_s, end), e in ebit_periods.items()}
     da_by_end = {
         end: float(e["val"])
         for (_s, end), e in _duration_periods(_facts_by_tag(us_gaap, _DA_TAGS), _ANNUAL_SPAN_DAYS).items()
@@ -276,6 +284,7 @@ def _build_annual_observations(ticker: str, us_gaap: dict) -> list[dict]:
 
         obs.append({
             "period_end":           end,
+            "filed":                filed_by_end.get(end),
             "revenue":              revenue_val,
             "cash":                 cash_by_end.get(end, 0.0),
             "ebit":                 ebit_by_end[end],
@@ -296,9 +305,10 @@ def _build_annual_observations(ticker: str, us_gaap: dict) -> list[dict]:
 
 def fetch_ticker_dcf_fundamentals(ticker: str) -> pd.DataFrame:
     """
-    Annual DCF-input observations for one ticker: period_end, revenue, cash,
-    ebit, da, capex, interest_expense, total_debt, debt_source, tax_expense,
-    pretax_income, effective_tax_rate, tax_rate_source, diluted_shares.
+    Annual DCF-input observations for one ticker: period_end, filed, revenue,
+    cash, ebit, da, capex, interest_expense, total_debt, debt_source,
+    tax_expense, pretax_income, effective_tax_rate, tax_rate_source,
+    diluted_shares.
 
     Returns an empty DataFrame (never raises) if the ticker has no
     resolvable CIK, no XBRL companyfacts, or no period with a resolvable

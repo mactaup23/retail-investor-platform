@@ -521,6 +521,109 @@ research practice: DCF is one input among several (DCF, comps, precedent transac
 sum-of-the-parts), each understood to carry different reliability by company type, not a
 single number treated as ground truth.
 
+## DCF Standalone Backtest — Pilot Result (inconclusive-leaning-negative, not scaled up)
+
+Follow-on to the DCF Valuation Engine above: does the Base-case valuation gap (`(base_per_share
+- price) / price`) actually predict forward returns? Same motivating question already asked of
+13F convergence and PEAD, and same "genuinely independent signal" logic — but DCF needed new
+infrastructure first, since `run_dcf()` only values a company **as of right now** (live price/
+market cap, a beta from a fixed 2021-2024 window, current risk-free rate) — unlike 13F filing
+periods or PEAD announcement dates, it has no time axis at all to backtest against.
+
+**`dcf/backtest.py`** (new) builds a point-in-time replay: `compute_point_in_time_dcf(ticker,
+as_of)` truncates fundamentals by **actual filing date** (not `period_end` — a fiscal year
+isn't public the day it ends), reconstructs a trailing-window beta ending at `as_of` (same
+joint FF7 OLS as `ticker_ff3_profile`, just parameterized by end date), and pulls historical
+price and risk-free rate — then reuses `dcf/valuation.py`'s `compute_baseline`/`run_scenario`
+unchanged. Score is Base case only, not a Bull/Base/Bear blend (approved — avoids stacking an
+unvalidated blend-weighting choice on top of the reconstruction itself).
+
+**Three real bugs found and fixed during this work, none of them in the DCF math itself:**
+
+1. **Share-count/price basis bug (dcf/backtest.py).** `pead.prices`' cached price series is
+   split-adjusted to TODAY's share count, but XBRL `diluted_shares` is the true nominal count
+   as originally reported — never retroactively adjusted for a LATER split. Uncorrected, AAPL
+   as-of 2018-06-29 (pre its 2020 4:1 split) computed a nonsensical +601.6% valuation gap.
+   Fixed by converting the raw share count onto the price series' basis via
+   `yf.Ticker(ticker).splits` before computing market cap or per-share value — verified against
+   NVDA's two-split history (4x in 2021, 10x in 2024) landing within ~2% of its actual current
+   share count.
+2. **XOM ticker→CIK collision (edgar_client.py, not fixed — confirmed isolated).** SEC's own
+   `company_tickers.json` currently maps `XOM` to CIK 2115436 ("ExxonMobil Holdings Corp", a
+   shell entity with `tickers: []` in its own submissions record), not the real operating
+   company's CIK 34088. Cross-checked 300 other tickers' resolved CIKs against each CIK's own
+   reported `tickers` field: 0/300 mismatches — this looks like an isolated quirk of Exxon's
+   corporate structure, not a systemic problem with `ticker_to_cik()`, so the shared utility
+   (also used by the GP factor's full universe pull) was deliberately left unchanged rather than
+   patched on unvalidated evidence. XOM simply drops out via the existing `no_xbrl_fundamentals`
+   gate, same as any other data-availability exclusion.
+3. **No shared yfinance throttle (new: yfinance_client.py).** Unlike SEC EDGAR
+   (`edgar_client.py`'s proven 0.12s-gap + backoff, shared across the whole process), nothing
+   throttled yfinance calls anywhere in this codebase. A naive ~300-ticker pilot run (one
+   `fetch_prices` call per ticker instead of one batched call for the whole sample, plus
+   per-ticker `.info`/`.splits`/`load_returns` calls) triggered "Too Many Requests" from Yahoo
+   after ~50 tickers and silently dropped 233/300 (78%) — not a random subset, but whichever
+   tickers processed before the block, which would have corrupted the backtest's coverage
+   invisibly if the per-ticker error log hadn't been read closely. Fixed with `yfinance_client.py`
+   (mirrors `edgar_client.py`'s pattern: shared process-wide clock, exponential backoff on
+   rate-limit-shaped errors) plus batching the pilot's price fetch into one call for the whole
+   sample instead of one per ticker. Even after both fixes, a 300-ticker run still throttled to
+   a crawl with zero errors logged — diagnosed as Yahoo applying a session/rolling-window
+   soft-throttle (slower responses, not hard errors, invisible to a quick isolated retest of the
+   ticker where progress had stalled) that total request *volume* trips, not just instantaneous
+   rate. Cut further by deriving the beta regression's daily return series from the
+   already-batched price data instead of a third independent per-ticker fetch via
+   `factor_engine.data_loader.load_returns` — a deliberate, flagged methodology choice (that
+   series and `pead.prices`' aren't provably identical, though both are standard total-return
+   closes), not a silent substitution.
+
+**Pilot scope (deliberately not the full ~1,500-ticker universe — see CLAUDE.md's general
+"pilot before full-scale compute" discipline):** 100-ticker stratified sample (proportional
+across `index_source`'s sp500/sp400/sp600 size tiers), quarterly evaluation grid 2014-06-30
+through the most recent completed quarter, all six of `smart_money/backtest.py`'s
+`HORIZONS_TRADING_DAYS` (21/63/126/168/210/252 trading days = 1/3/6/8/10/12 months) — DCF/value
+signals are academically documented to work on longer horizons than 13F convergence or PEAD
+drift, so this was tested explicitly wider than PEAD's own (21, 63), flagged going in as a
+different kind of signal with a different expected horizon so a null short-horizon result
+wouldn't be misread as failure. (Originally scoped to 300 tickers; cut to 100 mid-session once
+the throttling above made even a fixed pilot size take multiple hours — see `--n-tickers` CLI
+flag on `scripts/run_dcf_pilot_backtest.py`.)
+
+**Coverage confirmed legitimate before reading any IC number** (the whole point of fixing bug
+#3 first): 100/100 tickers had price coverage, both skip categories are ordinary data gaps
+(`unsuitable_business_model`: 27, `no_xbrl_fundamentals`: 12 — zero `fetch_failure` or
+`no_price_coverage` drops), 61 tickers scored, 2,211 (ticker, quarter) rows across 46 quarters,
+every count reconciling exactly (61 tickers x up to 49 quarters = 2,211 scored + 99 no_beta +
+636 insufficient_history + 43 no_diluted_shares = 2,989).
+
+**Result:**
+
+| Horizon | Mean IC | t-stat | Hit rate |
+|---|---|---|---|
+| 1mo | -0.0169 | -0.58 | 57.8% |
+| 3mo | -0.0337 | -1.32 | 53.3% |
+| 6mo | -0.0320 | -1.06 | 56.8% |
+| 8mo | -0.0332 | -1.10 | 55.8% |
+| 10mo | -0.0441 | -1.41 | 54.8% |
+| 12mo | -0.0372 | -1.17 | 57.1% |
+
+**Inconclusive-leaning-negative, not scaled to the full universe.** Every horizon's IC is
+negative, and none reach significance (max |t| = 1.41 at 10mo) — this is NOT the "weak short
+horizon, strengthening at 6-12mo" pattern the pre-registered hypothesis expected for a value
+signal; the long horizons don't show a positive IC emerging either. At the same time, N=61
+tickers is modest (smaller than PEAD's ~1,500-ticker or the composite test's 1,432-ticker
+samples), so this isn't powered to call a confident negative result either — consistently
+negative in sign, but statistically indistinguishable from zero throughout. Explicit decision
+after reviewing this: **stop here rather than scale to the full universe.** The pilot's own
+purpose (catch a methodology bug before burning full-universe compute) was served three times
+over; the result itself doesn't look promising enough to justify several more hours of
+Yahoo-throttled compute on the current evidence. Not wired into any signal blend, same status
+as PEAD's EDGAR-extension spike (closed) rather than the composite test (closed but with a
+usable, if modest, positive result). Revisit only with a new idea for why the Base-case
+valuation gap specifically might be biased (e.g. the terminal-value dominance and flat
+margin/capex assumptions already documented under DCF Valuation Engine above), not by simply
+re-running at larger N on the current methodology.
+
 ## Module 5 — Tax-Lot Engine
 
 taxlot.py ingests Fidelity/Schwab/IBKR/generic CSV exports. Supports FIFO/LIFO/MIN_TAX/SPEC_ID lot selection. Flags wash-sale risk (retrospective disallowed + prospective warning). Persists to TaxLot table.

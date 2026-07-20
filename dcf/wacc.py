@@ -28,9 +28,12 @@ observable and correct for equity weight); D = book value of total debt
 standard proxy).
 """
 
+import datetime
+
 import yfinance as yf
 
 EQUITY_RISK_PREMIUM = 0.05   # documented assumption (Damodaran long-run US implied ERP range), not platform-derived
+_HISTORICAL_RF_LOOKBACK_DAYS = 10   # window to search backward for a priced ^TNX row near a historical as_of date
 
 
 def fetch_risk_free_rate() -> float:
@@ -39,9 +42,30 @@ def fetch_risk_free_rate() -> float:
     Raises if ^TNX has no recent price data — callers should treat this as a
     hard dependency, not silently default a risk-free rate.
     """
-    hist = yf.Ticker("^TNX").history(period="5d")
+    from yfinance_client import call_with_backoff
+    hist = call_with_backoff(lambda: yf.Ticker("^TNX").history(period="5d"))
     if hist.empty:
         raise ValueError("Could not fetch 10-year Treasury yield (^TNX) — no recent price data")
+    return float(hist["Close"].iloc[-1]) / 100.0
+
+
+def fetch_risk_free_rate_as_of(as_of: datetime.date) -> "float | None":
+    """
+    10-year US Treasury yield as of a past date — for dcf/backtest.py's
+    point-in-time replay, which needs the rate actually observable at a
+    historical evaluation date, not today's. Uses the last ^TNX close on or
+    before as_of, within _HISTORICAL_RF_LOOKBACK_DAYS (covers weekends/
+    holidays around the date). Returns None (never raises) if no priced row
+    falls in that window — callers should treat this the same as any other
+    "insufficient data at this point in time" backtest gap, not a hard
+    dependency failure like fetch_risk_free_rate() above.
+    """
+    from yfinance_client import call_with_backoff
+    start = as_of - datetime.timedelta(days=_HISTORICAL_RF_LOOKBACK_DAYS)
+    end = as_of + datetime.timedelta(days=1)   # yfinance end is exclusive; include as_of itself
+    hist = call_with_backoff(lambda: yf.Ticker("^TNX").history(start=start.isoformat(), end=end.isoformat()))
+    if hist.empty:
+        return None
     return float(hist["Close"].iloc[-1]) / 100.0
 
 

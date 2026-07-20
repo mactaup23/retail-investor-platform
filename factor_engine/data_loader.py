@@ -53,7 +53,10 @@ def load_prices(
         if os.path.exists(cache):
             series = pd.read_csv(cache, index_col=0, parse_dates=True).squeeze()
         else:
-            raw = yf.download(ticker, start=start, end=end, auto_adjust=True, progress=False)
+            from yfinance_client import call_with_backoff
+            raw = call_with_backoff(
+                lambda: yf.download(ticker, start=start, end=end, auto_adjust=True, progress=False)
+            )
             if raw.empty:
                 raise ValueError(f"No data returned for {ticker!r} ({start} to {end})")
             series = raw["Close"].squeeze()
