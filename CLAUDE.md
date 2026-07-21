@@ -707,6 +707,119 @@ Not wired into any signal blend — same status as the pilot, PEAD's EDGAR-exten
 every other closed diagnostic in this document. Panel: `data/dcf/full_backtest_panel.csv`.
 State: `data/dcf/full_backtest_state.json`.
 
+## Quality & Health Metrics (DuPont / Altman Z'' / Piotroski F / Beneish M)
+
+A dashboard feature (`quality/` package), not a fifth backtested research pillar like PEAD/DCF
+— four well-established academic financial-health frameworks computed from already-cached
+XBRL fundamentals and displayed as a live snapshot on the stock deep-dive's new
+"Quality & Health" tab (`app_pages/signals.py`). Scope was deliberately kept to dashboard
+display only, not a point-in-time backtest — these are diagnostic frameworks with established
+interpretive literature of their own, not new predictive signals to validate the way PEAD/DCF
+were.
+
+**Data layering — three new modules reusing existing cache layers, zero new EDGAR calls:**
+- `quality/fundamentals.py` — parses the genuinely new XBRL fields none of GP/DCF already
+  extract: Net Income, Stockholders' Equity, Current Assets/Liabilities, Total Liabilities,
+  Retained Earnings, Operating Cash Flow, Accounts Receivable, PP&E (net), SG&A, isolated
+  Depreciation (separate from DCF's combined D&A), long-term debt only (excluding short-term
+  borrowings — distinct from DCF's `total_debt`), and instant (not weighted-average-diluted)
+  shares outstanding. All confirmed present in the already-cached raw XBRL companyfacts JSON
+  (`data/gp/xbrl_raw/{cik}.json`) during scoping. Annual only, same as DCF — not persisted to
+  its own CSV cache (cheap local re-parse, mirroring `dcf/fundamentals.py`'s own reasoning).
+- `quality/inputs.py` — merges GP's cache + DCF's fetch + quality/fundamentals.py's new fields
+  into one annual panel per ticker (inner join on `period_end`), plus the business-model
+  exclusion check every metric but DuPont needs. `total_liabilities` falls back to
+  Total Assets − Equity (flagged `liabilities_source`) when the direct XBRL tag doesn't
+  resolve — algebraically exact, not an approximation, since both components are already
+  required elsewhere in the panel.
+- Four metric modules (`quality/dupont.py`, `altman.py`, `piotroski.py`, `beneish.py`), each
+  reading the shared panel and computing one framework.
+
+**Business-model exclusion: reuses `dcf/exclusions.py`'s bank/insurer/REIT classification
+directly** (same live-GICS-sector cache, ~1,500 tickers already populated) for Altman,
+Piotroski, and Beneish — no new exclusion mechanism built. Doubly justified for Piotroski
+specifically: its current-ratio signal is not just a methodological-fit judgment call but a
+genuine data-availability gap, since `AssetsCurrent`/`LiabilitiesCurrent` don't resolve at all
+for unclassified financial-services balance-sheet templates (confirmed: JPM/O lack these tags
+entirely). DuPont has no business-model precondition of its own (pure algebraic identity) but
+in practice still returns `insufficient_data` for banks/insurers/REITs today, because
+`quality/inputs.py`'s panel gates on GP's cache being non-empty, and GP's cache requires a
+resolvable COGS to produce any row — no COGS-equivalent XBRL concept exists for these business
+models. This is an inherited plumbing constraint, not a considered exclusion the way the other
+three are; left as a known limitation rather than building a lighter Revenue/EBIT/Assets-only
+path bypassing GP's cache, since DuPont for financials wasn't the core ask and the other three
+metrics are excluded for these tickers regardless.
+
+**DuPont — 5-step, not 3-step**, chosen over the textbook 3-step identity because Pretax
+Income and EBIT are already cached from the DCF work, so the richer decomposition (splitting
+out tax burden and interest burden from operating margin) costs nothing extra:
+`ROE = (NI/Pretax) x (Pretax/EBIT) x (EBIT/Revenue) x (Revenue/TA) x (TA/Equity)`. Verified via
+recomposed-ROE-vs-direct-NI/Equity cross-check on AAPL/MSFT/KO/NVDA — exact match (gap 0.0000)
+on every ticker, confirming the 5 components are wired correctly.
+
+**Altman Z''-Score (Altman, Hartzell & Peck 1995) only — not the original 1968 Z or the 1983
+Z' — deliberate choice, confirmed with the user rather than picked unilaterally.** Z'' drops
+the original's Sales/Total-Assets term (X5) entirely and uses book (not market) equity, which
+is exactly why it doesn't need a manufacturing-vs-non-manufacturing classifier — this codebase
+has no GICS/SIC taxonomy beyond the coarse bank/insurer/REIT flag, so building one just to
+support the 1968 variant's classifier requirement wasn't worth the added scope.
+`Z'' = 6.56*X1 + 3.26*X2 + 6.72*X3 + 1.05*X4`, X1=WC/TA, X2=RetainedEarnings/TA, X3=EBIT/TA,
+X4=BookEquity/TotalLiabilities. Zones: Safe >2.6, Grey 1.1–2.6, Distress ≤1.1.
+
+**Piotroski F-Score (2000)** — standard 9 binary signals across profitability (4),
+leverage/liquidity/source-of-funds (3), operating efficiency (2), summed 0–9. Signal 5
+(leverage) and Beneish's LVGI both use long-term debt specifically (the new
+`long_term_debt` field, excluding short-term borrowings) rather than DCF's combined
+`total_debt` — Piotroski's original leverage signal is about long-term debt reduction
+specifically, a different form of deleveraging than paying down short-term revolving credit.
+Requires two consecutive fiscal years (350–380 days apart) — a wider/narrower gap means the
+panel's two most recent rows aren't adjacent years (a data gap), and the score isn't computed
+rather than silently comparing non-adjacent periods. Piotroski's own paper validated this on a
+high book-to-market (value stock) universe specifically — surfaced as a caveat in the
+dashboard, not treated as a universal buy signal.
+
+**Beneish M-Score (1999)** — 8-variable model,
+`M = -4.84 + 0.920*DSRI + 0.528*GMI + 0.404*AQI + 0.892*SGI + 0.115*DEPI - 0.172*SGAI +
+4.679*TATA - 0.327*LVGI`. TATA approximates Beneish's "Income from Continuing Operations" with
+Net Income (standard practitioner substitution, flagged via `tata_income_source`). Threshold
+is genuinely ambiguous across sources: the original paper's cost-minimizing cutoff is -1.78;
+-2.22 is the more conservative threshold commonly cited in practitioner literature. Both
+surfaced on the dashboard rather than picking one silently. All 8 inputs are required for both
+years (unlike Piotroski's independent binary signals, Beneish's terms are multiplicatively
+combined with fitted coefficients, so a missing term has no safe placeholder) — a ticker
+missing any single component returns `insufficient_data` rather than a partial score.
+
+**Real bug found and fixed during sanity testing: AQI's "Securities" term double-counted
+short-term investments.** Beneish's original AQI numerator is `CA + PPE + Securities`
+("Securities" meaning long-term investment securities, a distinct non-current asset class).
+First implementation approximated this with GP's cached `short_term_investments` field, since
+no long-term-investments XBRL tag is resolved anywhere in this codebase. This is wrong:
+short-term/marketable securities are already a component of `AssetsCurrent` for every filer
+checked, so adding STI on top of CA double-counts — confirmed empirically on NVDA, whose
+large short-term-investments balance (t-1: CA=$80.1B, STI=$34.6B, CA+PPE+STI=$121.0B >
+TA=$111.6B) drove AQI to -4.05, an impossible ratio for this index (should center near 1).
+Fixed by dropping the Securities term entirely (`AQI = [1-(CA+PPE)/TA]_t / [1-(CA+PPE)/TA]_t-1`)
+rather than approximating with a component proven to double-count — the standard
+simplification used in practitioner implementations when a clean long-term-securities
+breakout isn't available. Post-fix, NVDA's AQI lands at 1.52 (plausible) and its full M-Score
+of -1.18 flags under both thresholds — driven by real, well-documented 65% YoY revenue growth
+(SGI=1.65) and a genuine balance-sheet shift toward long-term strategic investments (AI
+partnerships), not a computation error. This is a well-documented tendency of the M-Score to
+flag legitimately fast-growing companies (rapid growth and shifting asset composition
+mechanically resemble some of the model's manipulation indicators) — surfaced as a caveat on
+the dashboard, not evidence of actual manipulation.
+
+**Verified with real data** (`scripts/run_quality_sanity.py`, same AAPL/MSFT/KO/NVDA candidate
+set as `run_dcf_sanity.py` for continuity, plus JPM/MET/O exclusion spot-checks): DuPont's
+recomposed ROE matches direct NI/Equity exactly on all 4 tickers; Altman zones and Piotroski
+F-Scores show real variation across tickers (not a constant, which would suggest a
+signal-direction bug); JPM/MET/O confirmed excluded from Altman/Piotroski/Beneish with the
+correct reason, DuPont correctly attempted (and blocked by the GP-cache limitation above, not
+silently skipped).
+
+Not wired into `FinalSignal` or any backtest — a live dashboard display, not a scored signal
+input, same framing as DCF's own standalone-valuation-vs-predictive-signal distinction above.
+
 ## Module 5 — Tax-Lot Engine
 
 taxlot.py ingests Fidelity/Schwab/IBKR/generic CSV exports. Supports FIFO/LIFO/MIN_TAX/SPEC_ID lot selection. Flags wash-sale risk (retrospective disallowed + prospective warning). Persists to TaxLot table.
@@ -767,3 +880,5 @@ TaxLot
 15. Relative valuation / comps (peer trading multiples) — recommended companion to the DCF
     engine for mega-cap names specifically, where single-stage DCF's terminal-value
     dependency is least reliable (see DCF Valuation Engine section above)
+16. Completed — Quality & Health metrics (`quality/`: DuPont, Altman Z'', Piotroski F,
+    Beneish M); see full section above

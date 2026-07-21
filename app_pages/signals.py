@@ -36,6 +36,7 @@ from dashboard.db import (
 )
 from dashboard.factor import current_portfolio_betas, ticker_ff3_profile
 from dashboard.valuation import ticker_dcf_valuation
+from dashboard.quality import ticker_altman_z, ticker_beneish_m, ticker_dupont, ticker_piotroski_f
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -819,6 +820,156 @@ def _render_valuation_tab(ticker: str, info: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Tab — Quality & Health (DuPont / Altman Z'' / Piotroski F / Beneish M)
+# ---------------------------------------------------------------------------
+
+_BUSINESS_MODEL_REASON_TEXT = {
+    "bank":     "banks — capital structure is regulatory- rather than market-driven, "
+                "and standard current-asset/liability concepts don't apply the same way.",
+    "insurer":  "insurers — float and claims reserves function as operating and "
+                "financing leverage simultaneously.",
+    "reit":     "REITs — required to distribute ~90% of taxable income, and their "
+                "balance-sheet structure doesn't fit these ratios' assumptions.",
+}
+
+
+def _render_quality_tab(ticker: str) -> None:
+    def _pct(v, digits=1):
+        f = _safe_float(v)
+        return f"{f * 100:.{digits}f}%" if f is not None else "N/A"
+
+    def _num(v, digits=2):
+        f = _safe_float(v)
+        return f"{f:.{digits}f}" if f is not None else "N/A"
+
+    # ── DuPont ROE Decomposition ───────────────────────────────────────────
+    st.markdown("**DuPont ROE Decomposition**")
+    dupont = ticker_dupont(ticker)
+    if dupont.get("status") != "ok":
+        reason = _BUSINESS_MODEL_REASON_TEXT.get(dupont.get("business_model_flag"), "")
+        if reason:
+            st.caption(f":gray[Not available — data gap for {reason}]")
+        else:
+            st.caption(":gray[Not available — insufficient fundamentals data]")
+    else:
+        d_cols = st.columns(5)
+        labels_keys = [
+            ("Tax Burden",        "tax_burden"),
+            ("Interest Burden",   "interest_burden"),
+            ("Operating Margin",  "operating_margin"),
+            ("Asset Turnover",    "asset_turnover"),
+            ("Equity Multiplier", "equity_multiplier"),
+        ]
+        for col, (label, key) in zip(d_cols, labels_keys):
+            with col:
+                st.markdown(f":gray[{label}]")
+                st.markdown(f"**{_num(dupont[key])}x**" if key != "operating_margin" else f"**{_pct(dupont[key])}**")
+        st.markdown(f"= **ROE: {_pct(dupont['roe'])}** (as of {dupont['period_end']})")
+        if dupont.get("business_model_flag"):
+            st.caption(":orange[Caveat: components mean something different for a "
+                       "regulated financial company's capital structure.]")
+
+    st.markdown("---")
+
+    # ── Altman Z''-Score ────────────────────────────────────────────────────
+    st.markdown("**Altman Z''-Score** (bankruptcy risk, industry-neutral variant)")
+    altman = ticker_altman_z(ticker)
+    if altman.get("status") == "excluded":
+        reason = _BUSINESS_MODEL_REASON_TEXT.get(altman.get("business_model_flag"), "")
+        st.caption(f":gray[Not shown — not a methodological fit for {reason}]")
+    elif altman.get("status") != "ok":
+        st.caption(":gray[Not available — insufficient fundamentals data]")
+    else:
+        zone_color = {"safe": "green", "grey": "orange", "distress": "red"}[altman["zone"]]
+        a_c1, a_c2 = st.columns([1, 2])
+        with a_c1:
+            st.markdown(f"### {_num(altman['z_score'])}")
+            st.badge(altman["zone"].upper(), color=zone_color)
+        with a_c2:
+            st.caption(
+                f"Working Capital/TA {_num(altman['x1_working_capital_to_assets'])}  ·  "
+                f"Retained Earnings/TA {_num(altman['x2_retained_earnings_to_assets'])}  ·  "
+                f"EBIT/TA {_num(altman['x3_ebit_to_assets'])}  ·  "
+                f"Equity/Liabilities {_num(altman['x4_equity_to_liabilities'])}"
+            )
+        st.caption(f"As of {altman['period_end']}. Zones: Safe >2.6, Grey 1.1–2.6, Distress ≤1.1 "
+                   "(Altman, Hartzell & Peck 1995).")
+
+    st.markdown("---")
+
+    # ── Piotroski F-Score ───────────────────────────────────────────────────
+    st.markdown("**Piotroski F-Score** (0–9 fundamental strength signals)")
+    piotroski = ticker_piotroski_f(ticker)
+    if piotroski.get("status") == "excluded":
+        reason = _BUSINESS_MODEL_REASON_TEXT.get(piotroski.get("business_model_flag"), "")
+        st.caption(f":gray[Not shown — not a methodological fit for {reason}]")
+    elif piotroski.get("status") != "ok":
+        st.caption(":gray[Not available — needs two consecutive fiscal years of data]")
+    else:
+        st.markdown(f"### {piotroski['f_score']} / 9")
+        signal_labels = [
+            ("f1_positive_roa",             "Positive ROA"),
+            ("f2_positive_cfo",             "Positive CFO"),
+            ("f3_improving_roa",            "Improving ROA"),
+            ("f4_cfo_exceeds_roa",          "CFO exceeds ROA (accrual quality)"),
+            ("f5_decreasing_leverage",      "Decreasing long-term leverage"),
+            ("f6_improving_current_ratio",  "Improving current ratio"),
+            ("f7_no_dilution",              "No new share issuance"),
+            ("f8_improving_gross_margin",   "Improving gross margin"),
+            ("f9_improving_asset_turnover", "Improving asset turnover"),
+        ]
+        p_cols = st.columns(3)
+        for i, (key, label) in enumerate(signal_labels):
+            with p_cols[i % 3]:
+                mark = "✅" if piotroski[key] else "❌"
+                st.markdown(f"{mark} {label}")
+        st.caption(
+            f"{piotroski['period_end']} vs {piotroski['prior_period_end']}. Validated by "
+            "Piotroski (2000) on high book-to-market (value) stocks specifically — read as a "
+            "fundamental-strength signal, not a universal buy indicator."
+        )
+
+    st.markdown("---")
+
+    # ── Beneish M-Score ─────────────────────────────────────────────────────
+    st.markdown("**Beneish M-Score** (earnings manipulation risk)")
+    beneish = ticker_beneish_m(ticker)
+    if beneish.get("status") == "excluded":
+        reason = _BUSINESS_MODEL_REASON_TEXT.get(beneish.get("business_model_flag"), "")
+        st.caption(f":gray[Not shown — not a methodological fit for {reason}]")
+    elif beneish.get("status") != "ok":
+        st.caption(":gray[Not available — needs two consecutive fiscal years of complete data]")
+    else:
+        b_c1, b_c2 = st.columns([1, 2])
+        with b_c1:
+            st.markdown(f"### {_num(beneish['m_score'])}")
+        with b_c2:
+            if beneish["flagged_practitioner_threshold"]:
+                st.badge("FLAGGED (both thresholds)", color="red")
+            elif beneish["flagged_original_threshold"]:
+                st.badge("FLAGGED (original threshold only)", color="orange")
+            else:
+                st.badge("NOT FLAGGED", color="green")
+            st.caption(f"Original paper threshold: {beneish['m_score']:.2f} vs -1.78  ·  "
+                       f"Practitioner threshold: vs -2.22")
+        with st.expander("Component indices"):
+            st.caption(
+                f"DSRI {_num(beneish['dsri'])}  ·  GMI {_num(beneish['gmi'])}  ·  "
+                f"AQI {_num(beneish['aqi'])}  ·  SGI {_num(beneish['sgi'])}  ·  "
+                f"DEPI {_num(beneish['depi'])}  ·  SGAI {_num(beneish['sgai'])}  ·  "
+                f"TATA {_num(beneish['tata'], 4)}  ·  LVGI {_num(beneish['lvgi'])}"
+            )
+            st.caption(
+                "A high M-Score is also known to flag legitimately fast-growing companies "
+                "(rapid revenue growth and shifting asset composition mechanically resemble "
+                "some of this model's manipulation indicators) — a real, documented limitation "
+                "of the model, not necessarily evidence of manipulation. Read alongside "
+                "context, not as a standalone verdict."
+            )
+        st.caption(f"{beneish['period_end']} vs {beneish['prior_period_end']}")
+
+
+# ---------------------------------------------------------------------------
 # Tab 4 — Financials
 # ---------------------------------------------------------------------------
 
@@ -1521,10 +1672,11 @@ def _render_deep_dive(ticker: str, row: dict, period_str: str) -> None:
         short = desc[:500] + ("…" if len(desc) > 500 else "")
         st.caption(short)
 
-    tab_sig, tab_price, tab_val, tab_fin, tab_earn, tab_factor = st.tabs([
+    tab_sig, tab_price, tab_val, tab_quality, tab_fin, tab_earn, tab_factor = st.tabs([
         ":material/radar: Signal",
         ":material/show_chart: Price",
         ":material/analytics: Valuation",
+        ":material/verified: Quality & Health",
         ":material/table_chart: Financials",
         ":material/calendar_month: Earnings",
         ":material/science: Factor Profile",
@@ -1538,6 +1690,9 @@ def _render_deep_dive(ticker: str, row: dict, period_str: str) -> None:
 
     with tab_val:
         _render_valuation_tab(ticker, info)
+
+    with tab_quality:
+        _render_quality_tab(ticker)
 
     with tab_fin:
         _render_financials_tab(ticker)
