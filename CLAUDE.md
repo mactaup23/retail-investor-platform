@@ -521,7 +521,7 @@ research practice: DCF is one input among several (DCF, comps, precedent transac
 sum-of-the-parts), each understood to carry different reliability by company type, not a
 single number treated as ground truth.
 
-## DCF Standalone Backtest — Pilot Result (inconclusive-leaning-negative, not scaled up)
+## DCF Standalone Backtest — Pilot Result (inconclusive-leaning-negative; see Full-Universe Result below — this pattern did not hold up at scale)
 
 Follow-on to the DCF Valuation Engine above: does the Base-case valuation gap (`(base_per_share
 - price) / price`) actually predict forward returns? Same motivating question already asked of
@@ -623,6 +623,89 @@ usable, if modest, positive result). Revisit only with a new idea for why the Ba
 valuation gap specifically might be biased (e.g. the terminal-value dominance and flat
 margin/capex assumptions already documented under DCF Valuation Engine above), not by simply
 re-running at larger N on the current methodology.
+
+## DCF Standalone Backtest — Full-Universe Result (final)
+
+Follow-on to the pilot above. The pilot's own "stop here" decision cited compute cost/risk
+(several more hours of Yahoo-throttled compute) as the reason not to scale up, not a
+determination that N=61 was already sufficient to trust the negative lean — so this wasn't
+revisited because of a new methodological idea (the bar the pilot section sets for a
+re-run); it was revisited because the compute-cost/risk objection itself was removable with
+better infrastructure, which is what got built first.
+
+**New infrastructure (`scripts/run_dcf_full_backtest.py`), specifically to de-risk a
+~1,500-ticker run against the pilot's own documented Yahoo session-level soft-throttle:**
+- Resumable state (`data/dcf/full_backtest_state.json`, one entry per ticker: `scored` or a
+  skip reason) plus incremental per-ticker panel writes — a stall or crash loses at most the
+  ticker in flight, not the run.
+- Chunked execution (250 tickers/chunk, one batched price fetch per chunk, an 8s cooldown
+  between chunks) instead of one monolithic fetch-everything-then-score pass.
+- A `--canary` mode: times a small sample of tickers NOT in the pilot's own 61-ticker sample
+  (a genuine cold read, not a warm-cache hit) through the same throttled call path, before
+  committing to the full run. Run first: 15 tickers, 1.95s/ticker average, zero backoff
+  warnings — healthy, cleared to launch.
+- A business-model classification cache (`dcf/exclusions.py::check_business_model_fit`,
+  `data/dcf/business_model_cache.csv`) — found during this work that
+  `compute_point_in_time_dcf()` was calling this function fresh on every single
+  (ticker, as_of) pair, not once per ticker, so an uncached ~46-quarter backtest grid was
+  making ~46x more yfinance `.info` calls per ticker than the pilot's own rate-limiting
+  investigation assumed. GICS sector/industry is static enough not to need refetching; this
+  benefits every `check_business_model_fit` call site (`dcf/valuation.py`,
+  `dcf/backtest.py`), not just this script.
+
+**Run result: clean, fast, no throttle recurrence.** Completed in ~55 minutes (one pass, no
+restarts needed) across the full 1,506-ticker universe. Zero `fetch_failure` entries in the
+final state file — the resumable chunking held up at scale; the pilot's own throttle problem
+did not recur. Coverage: 1,066 scored (70.8%), 266 `unsuitable_business_model`, 136
+`no_xbrl_fundamentals`, 35 `no_scored_rows` (loaded fine, no quarter cleared every
+per-observation gate), 3 `no_price_coverage`. (Exclusion/no-fundamentals rates differ
+somewhat from the pilot's 27%/12% — expected sampling variance from N=100 vs the full
+universe, not a methodology difference.)
+
+**Result (1,066 tickers, 39,970 rows, ~42-45 quarters per horizon):**
+
+| Horizon | Mean IC | t-stat | Hit rate |
+|---|---|---|---|
+| 1mo  | -0.0040 | -0.27 | 51.1% |
+| 3mo  | -0.0101 | -0.73 | 53.3% |
+| 6mo  | -0.0072 | -0.61 | 52.3% |
+| 8mo  | -0.0001 | -0.01 | 51.2% |
+| 10mo | +0.0008 | +0.07 | 50.0% |
+| 12mo | +0.0032 | +0.25 | 50.0% |
+
+**The key methodological lesson: the pilot's consistent negative lean was a small-sample
+artifact, not a real effect.** At N=61, every horizon leaned negative and the pattern
+deepened toward longer horizons (max |t| = 1.41 at 10mo) — a shape that looked, on its face,
+like it might be an emerging value-signal-at-long-horizon story just short of significance.
+At N=1,066, that shape doesn't survive: every IC sits close to zero, no horizon clears even
+|t| = 1, and the longer horizons (8-12mo) come out essentially flat-to-slightly-positive
+rather than continuing the pilot's negative trend. Properly read, the pilot result was never
+"weak evidence of a negative effect" — it was too underpowered to distinguish a real effect
+from noise in either direction, and the full-universe run is what actually answers the
+question. This is the same "don't trust an underpowered baseline" discipline as the
+Module 3/4 +0.061 investigation and PEAD's full-range-vs-2014Q2+ windowing above, applied to
+this signal's own pilot-vs-full-scale step specifically.
+
+**Final conclusion: the standalone Base-case DCF valuation gap shows no detectable
+predictive power at any tested horizon (1-12 months) on point-in-time reconstructed data.**
+Practical implications:
+- **Not worth testing in the 13F+PEAD composite framework** (`scripts/
+  run_composite_backtest.py` above) — that test's own value came from combining two signals
+  that each independently cleared a real bar; blending in a signal with no standalone edge
+  can't improve a combination, so this isn't pursued.
+- **DCF remains valuable as a standalone valuation display, independent of this result.** The
+  Discovery/Watchlist valuation badge and Valuation tab answer "is this cheap or expensive
+  relative to modeled intrinsic value" — a legitimate research question in its own right
+  (see DCF Valuation Engine's own worked AAPL/MSFT/KO/NVDA discussion above), not a
+  return-prediction claim. A valuation framework failing to predict near-term returns is
+  consistent with, not contradicted by, standard equity-research practice — DCF is normally
+  read as a long-horizon fundamentals check, not a trading signal, and this backtest's null
+  result is itself evidence for presenting it that way rather than as a scored predictive
+  input.
+
+Not wired into any signal blend — same status as the pilot, PEAD's EDGAR-extension spike, and
+every other closed diagnostic in this document. Panel: `data/dcf/full_backtest_panel.csv`.
+State: `data/dcf/full_backtest_state.json`.
 
 ## Module 5 — Tax-Lot Engine
 
