@@ -34,7 +34,7 @@ from dashboard.db import (
     watchlist_add,
     watchlist_remove,
 )
-from dashboard.factor import current_portfolio_betas, ticker_ff3_profile
+from dashboard.factor import current_portfolio_betas, portfolio_impact_full, ticker_ff3_profile
 from dashboard.valuation import ticker_dcf_valuation
 from dashboard.quality import ticker_altman_z, ticker_beneish_m, ticker_dupont, ticker_piotroski_f
 
@@ -378,6 +378,62 @@ def _portfolio_impact_line(ticker: str) -> str | None:
     return f"Adding {ticker} at 5% would {market_part}{sec_part}. Full factor breakdown in the Factor Profile tab."
 
 
+def _render_full_portfolio_impact(ticker: str) -> None:
+    """
+    Volatility/Sharpe and correlation-overlap impact of adding `ticker` at 5%,
+    below the existing beta-blend sentence — full recompute via
+    dashboard.factor.portfolio_impact_full(), not an approximation (see that
+    function's docstring). Compact captions, not a new dashboard section.
+    """
+    from dashboard.cache import load as _load_portfolio_cache
+
+    pf_cache = _load_portfolio_cache()
+    cache_key = pf_cache.get("cached_at") if pf_cache else "none"
+    impact = portfolio_impact_full(ticker, cache_key)
+
+    if "error" in impact:
+        if impact["error"] == "insufficient_candidate_data":
+            st.caption(
+                f":gray[Volatility/Sharpe/correlation impact unavailable — {ticker} "
+                "doesn't have enough price history over the current Portfolio "
+                "analysis window (recent IPO, delisted, or thin overlap).]"
+            )
+        else:
+            st.caption(
+                ":gray[Volatility/Sharpe/correlation impact needs a current Portfolio "
+                "analysis — run or refresh it on the Portfolio page to see this.]"
+            )
+        return
+
+    cur_risk, new_risk = impact["current_risk"], impact["blended_risk"]
+    cur_vol, new_vol = cur_risk["annualized_volatility"], new_risk["annualized_volatility"]
+    cur_sharpe, new_sharpe = cur_risk["sharpe_ratio"], new_risk["sharpe_ratio"]
+    sharpe_str = (
+        f"{cur_sharpe:.2f} → {new_sharpe:.2f}"
+        if cur_sharpe is not None and new_sharpe is not None else "—"
+    )
+    st.caption(
+        f"Est. portfolio volatility: {cur_vol * 100:.1f}% → {new_vol * 100:.1f}%  ·  "
+        f"Sharpe: {sharpe_str}"
+    )
+
+    tier = impact["tier"]
+    if tier == "deepens":
+        names = "/".join(impact["deepened_clique"])
+        st.caption(
+            f":orange[Correlation flag: would deepen your existing {names} cluster "
+            "— not genuine diversification.]"
+        )
+    elif tier == "neutral":
+        names = ", ".join(impact["correlated_with"])
+        st.caption(f":gray[Correlation flag: moderate overlap with {names}.]")
+    else:
+        st.caption(
+            ":green[Correlation flag: adds genuine diversification — not highly "
+            "correlated with any current holding.]"
+        )
+
+
 def _render_signal_tab(row: dict, period_str: str) -> None:
     cusip  = row.get("cusip")
     ticker = row.get("ticker")
@@ -388,6 +444,7 @@ def _render_signal_tab(row: dict, period_str: str) -> None:
         impact = _portfolio_impact_line(ticker)
         if impact:
             st.info(impact, icon=":material/science:")
+        _render_full_portfolio_impact(ticker)
 
     # --- Convergence score breakdown ---
     st.markdown("#### Convergence Signal")

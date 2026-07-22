@@ -5,6 +5,9 @@ Public functions:
     portfolio_ff3_betas(weights)   — portfolio headline 7-factor betas for given weights (cache_resource)
     current_portfolio_betas()      — portfolio_ff3_betas() for the user's saved portfolio (data/user_prefs.json)
     ticker_ff3_profile(t)          — single-ticker 7-factor OLS regression (cache_data: 24h)
+    portfolio_impact_full(t, key)  — full blended-portfolio vol/Sharpe/correlation impact of
+                                      adding ticker t at 5% (cache_data: 24h, keyed to the
+                                      Portfolio page's cache timestamp — see docstring below)
 
 Function names kept as "_ff3_" for continuity with existing dashboard callers;
 both now run the full 7-factor model: Fama-French 5 (market, size, value,
@@ -154,3 +157,117 @@ def ticker_ff3_profile(ticker: str) -> dict | None:
         return profile
     except Exception:
         return None
+
+
+_IMPACT_WEIGHT_PCT = 0.05
+
+
+@st.cache_data(
+    ttl=86400,
+    show_spinner="Computing full portfolio impact (volatility, Sharpe, correlation)…",
+)
+def portfolio_impact_full(ticker: str, portfolio_cache_key: str) -> dict:
+    """
+    Full recompute (not an approximation) of the current portfolio's volatility,
+    Sharpe ratio, and trailing correlation profile with `ticker` added at
+    _IMPACT_WEIGHT_PCT (5%), scaling existing positions down proportionally —
+    same 95/5 blend as _portfolio_impact_line's beta sentence in
+    app_pages/signals.py, just applied to the actual per-holding return series
+    (via analyze_portfolio()) instead of pre-computed betas, so the new
+    position's real cross-correlation with existing holdings is captured, not
+    just a linear blend of two independently-estimated beta vectors.
+
+    portfolio_cache_key should be the current disk cache's `cached_at` timestamp
+    (dashboard.cache.load()) — passed explicitly as a cache-busting argument so
+    Streamlit's cache_data invalidates whenever the user re-runs the Portfolio
+    page's analysis, rather than serving a stale before/after comparison for up
+    to the full 24h TTL.
+
+    Returns {"error": <code>} on failure rather than a bare None — same
+    convention as dashboard.valuation.ticker_dcf_valuation — so the caller can
+    show an accurate reason instead of a generic message. Confirmed necessary
+    in practice: CRWV (a 2025 IPO) has no price history back to a typical
+    2021-2024 analysis window, which is a DATA problem specific to the
+    candidate ticker, not a stale/missing Portfolio-page cache — conflating the
+    two would incorrectly tell the user to "refresh the Portfolio page" for a
+    problem refreshing it can't fix.
+
+    Error codes:
+        no_portfolio_cache      — no current, up-to-date Portfolio-page analysis
+                                   cached for the exact holdings in
+                                   data/user_prefs.json (missing cache, stale
+                                   weights, or predates risk_metrics/
+                                   concentration). Caller should direct the user
+                                   to run/refresh the Portfolio page.
+        insufficient_candidate_data — the candidate ticker itself lacks enough
+                                   price history over the cached analysis
+                                   window (new IPO, delisted, thin overlap).
+                                   Caller should NOT suggest refreshing the
+                                   Portfolio page — that isn't the cause.
+    """
+    from dashboard.cache import load as _load_disk
+    from dashboard.holdings import normalize_weights_dict, weights_dict, weights_match
+    from dashboard.prefs import load as _load_prefs
+    from factor_engine.concentration import trailing_correlation_matrix
+    from factor_engine.portfolio import analyze_portfolio
+    from factor_engine.risk_metrics import compute_risk_metrics
+
+    cached = _load_disk()
+    current_weights = normalize_weights_dict(weights_dict(_load_prefs()["portfolio"]))
+    if (
+        cached is None
+        or not cached.get("risk_metrics")
+        or not cached.get("concentration")
+        or not weights_match(cached.get("raw_weights"), current_weights)
+    ):
+        return {"error": "no_portfolio_cache"}
+
+    # Scale existing (already-normalized) weights down by 5%, add the candidate
+    # at 5% — or top up its existing position if it's already a holding, rather
+    # than the dict merge silently clobbering it.
+    blended = {t: (1 - _IMPACT_WEIGHT_PCT) * w for t, w in cached["weights"].items()}
+    blended[ticker] = blended.get(ticker, 0.0) + _IMPACT_WEIGHT_PCT
+
+    try:
+        result = analyze_portfolio(start=cached["start"], end=cached["end"], weights=blended)
+    except Exception:
+        return {"error": "insufficient_candidate_data"}
+
+    blended_risk = compute_risk_metrics(result["combined_rets"], result["factors"])
+    blended_corr = trailing_correlation_matrix(result["all_returns"])
+    if ticker not in blended_corr.columns:
+        return {"error": "insufficient_candidate_data"}
+    corr_row = blended_corr[ticker]
+
+    threshold = cached["concentration"].get("correlation_threshold", 0.70)
+    existing_tickers = [t for t in cached["weights"] if t != ticker]
+    correlated_with = [
+        t for t in existing_tickers if t in corr_row.index and corr_row[t] > threshold
+    ]
+
+    # Does the candidate join an existing multi-holding clique (every member
+    # >threshold correlated with it), i.e. deepen an already-established
+    # mutual-overlap group — vs. just a one-off pairwise correlation?
+    deepened_clique = None
+    for clique in cached["concentration"].get("trailing_cliques", []):
+        members = clique["tickers"]
+        if len(members) >= 2 and all(
+            m in corr_row.index and corr_row[m] > threshold for m in members
+        ):
+            deepened_clique = members
+            break
+
+    if deepened_clique:
+        tier = "deepens"
+    elif correlated_with:
+        tier = "neutral"
+    else:
+        tier = "diversifies"
+
+    return {
+        "current_risk":    cached["risk_metrics"],
+        "blended_risk":    blended_risk,
+        "tier":            tier,
+        "deepened_clique": deepened_clique,
+        "correlated_with": correlated_with,
+    }
