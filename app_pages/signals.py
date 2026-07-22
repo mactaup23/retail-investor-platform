@@ -378,12 +378,164 @@ def _portfolio_impact_line(ticker: str) -> str | None:
     return f"Adding {ticker} at 5% would {market_part}{sec_part}. Full factor breakdown in the Factor Profile tab."
 
 
-def _render_full_portfolio_impact(ticker: str) -> None:
+
+# ---------------------------------------------------------------------------
+# Position Sizing Guidance (2.5D)
+# ---------------------------------------------------------------------------
+#
+# Concentration-cap methodology, matching the DCF Bull/Base/Bear-over-Monte-
+# Carlo precedent: no Kelly-style formula, because this platform has no
+# validated win-probability/edge estimate to plug into one — the DCF
+# standalone backtest found no predictive power at any horizon, and the 13F
+# convergence signal's own standalone IC is weak (~0.006-0.008). Treating
+# either as betting-strategy-grade evidence would manufacture false
+# precision. Instead: a base range anchored to this portfolio's own revealed
+# single-name position sizes, moved only by discrete additive deltas (never
+# a continuous/multiplicative formula), then hard-capped by two binary
+# concentration checks. Every number traces to an already-computed field —
+# nothing here is fit or assumed.
+
+_SIZING_BASE_LOW = 1.5
+_SIZING_BASE_HIGH = 3.5
+_SIZING_VERY_HIGH_STEP = 1.0
+_SIZING_DEEPENS_LOW_DELTA = -0.5
+_SIZING_DEEPENS_HIGH_DELTA = -1.0
+_SIZING_DIVERSIFIES_HIGH_DELTA = 0.5
+_SIZING_CONCENTRATED_CAP_PCT = 2.0
+
+_SIZING_CORR_REASON = {
+    "deepens": "overlaps an existing correlation cluster",
+    "diversifies": "adds genuine diversification",
+}
+
+
+def _position_sizing_range(final_score: float, corr_tier: str) -> dict:
+    """
+    Base sizing band (percentage points) before concentration caps.
+
+    Anchor cell (High Conviction, neutral correlation) is 1.5-3.5% — below
+    this portfolio's existing individual-stock positions (NVDA ~3%, GOOGL
+    ~5.5%), on the reasoning that an unproven new idea should start as a
+    smaller "starter position" than an already-vetted, seasoned holding.
+    Every other cell is that anchor plus fixed additive deltas:
+      - Very High Conviction: +1.0pp to both bounds
+      - deepens: -0.5pp low / -1.0pp high (compress + shift down)
+      - diversifies: +0.5pp high only (more upside room, no forced minimum)
+    """
+    low, high = _SIZING_BASE_LOW, _SIZING_BASE_HIGH
+
+    very_high = final_score >= 0.70
+    if very_high:
+        low += _SIZING_VERY_HIGH_STEP
+        high += _SIZING_VERY_HIGH_STEP
+
+    if corr_tier == "deepens":
+        low += _SIZING_DEEPENS_LOW_DELTA
+        high += _SIZING_DEEPENS_HIGH_DELTA
+    elif corr_tier == "diversifies":
+        high += _SIZING_DIVERSIFIES_HIGH_DELTA
+
+    reasons = ["Very High Conviction" if very_high else "High Conviction"]
+    corr_reason = _SIZING_CORR_REASON.get(corr_tier)
+    if corr_reason:
+        reasons.append(corr_reason)
+
+    return {"low": low, "high": high, "reasons": reasons}
+
+
+def _largest_single_stock_weight_pct(weights: dict[str, float]) -> float | None:
+    """
+    Largest existing individual-stock position in the current portfolio, in
+    percentage points — used as a hard ceiling so a suggested range can't
+    exceed the investor's biggest existing single-name conviction bet.
+    Classified via yfinance's quoteType (EQUITY vs ETF/MUTUALFUND/INDEX),
+    reusing the existing _yf_info 1-hour cache rather than a new fetch
+    mechanism — no ETF/stock classifier previously existed in this codebase.
+    """
+    best = None
+    for ticker, w in weights.items():
+        info = _yf_info(ticker)
+        if info.get("quoteType") == "EQUITY":
+            pct = w * 100
+            if best is None or pct > best:
+                best = pct
+    return best
+
+
+def _apply_sizing_caps(rng: dict, hhi_info: dict | None, largest_stock_pct: float | None) -> dict:
+    """
+    Two binary, mechanical caps — deliberately not a proportional/continuous
+    shrink against HHI, which would require an invented sensitivity
+    coefficient (the same false-precision problem Kelly was rejected for).
+    Caps only ever lower the upper bound; if that pushes it below the lower
+    bound, the range collapses to that single tight ceiling rather than
+    inverting.
+    """
+    low, high = rng["low"], rng["high"]
+    capped_by = []
+
+    if (
+        hhi_info
+        and hhi_info.get("meaningfully_more_concentrated_than_count")
+        and high > _SIZING_CONCENTRATED_CAP_PCT
+    ):
+        high = _SIZING_CONCENTRATED_CAP_PCT
+        capped_by.append("your portfolio is already more concentrated than its holding count suggests")
+
+    if largest_stock_pct is not None and high > largest_stock_pct:
+        high = largest_stock_pct
+        capped_by.append(f"capped at your current largest single-stock holding ({largest_stock_pct:.1f}%)")
+
+    if low > high:
+        low = high
+
+    return {"low": low, "high": high, "reasons": rng["reasons"], "capped_by": capped_by}
+
+
+def _render_position_sizing(final_score: float, corr_tier: str, pf_cache: dict, ticker: str) -> None:
+    """
+    Suggested position-size band, rendered directly under the correlation
+    flag it depends on. DCF valuation is annotation-only — it does not move
+    the range (see module-level comment above and CLAUDE.md's DCF standalone
+    backtest conclusion: no demonstrated predictive power, so it isn't
+    treated as if it carries sizing-relevant evidence).
+    """
+    rng = _position_sizing_range(final_score, corr_tier)
+
+    hhi_info = (pf_cache.get("concentration") or {}).get("hhi")
+    largest_stock_pct = _largest_single_stock_weight_pct(pf_cache.get("weights", {}))
+    rng = _apply_sizing_caps(rng, hhi_info, largest_stock_pct)
+
+    reason_str = " + ".join(rng["reasons"])
+    st.markdown(f"**Suggested position size: {rng['low']:.1f}–{rng['high']:.1f}%**")
+    st.caption(
+        f":gray[Starting point for your own sizing decision, not a recommendation "
+        f"— based on {reason_str}.]"
+    )
+    for cap_reason in rng["capped_by"]:
+        st.caption(f":gray[Capped — {cap_reason}.]")
+
+    dcf = ticker_dcf_valuation(ticker)
+    if "error" not in dcf:
+        upside = dcf["scenarios"]["base"]["upside_pct"]
+        label, _ = _valuation_badge_info(upside)
+        if label != "—":
+            upside_str = f" ({upside:+.0f}%)" if upside is not None else ""
+            st.caption(
+                f":gray[Note: DCF base case flags this as {label}{upside_str} — "
+                "this does not factor into the range above; DCF's own backtest "
+                "found no standalone predictive power.]"
+            )
+
+
+def _render_full_portfolio_impact(ticker: str, final_score: float) -> None:
     """
     Volatility/Sharpe and correlation-overlap impact of adding `ticker` at 5%,
     below the existing beta-blend sentence — full recompute via
     dashboard.factor.portfolio_impact_full(), not an approximation (see that
     function's docstring). Compact captions, not a new dashboard section.
+    Position sizing guidance (2.5D) renders below the correlation flag,
+    reusing this same impact computation's tier rather than a second call.
     """
     from dashboard.cache import load as _load_portfolio_cache
 
@@ -433,6 +585,9 @@ def _render_full_portfolio_impact(ticker: str) -> None:
             "correlated with any current holding.]"
         )
 
+    if pf_cache:
+        _render_position_sizing(final_score, tier, pf_cache, ticker)
+
 
 def _render_signal_tab(row: dict, period_str: str) -> None:
     cusip  = row.get("cusip")
@@ -444,7 +599,7 @@ def _render_signal_tab(row: dict, period_str: str) -> None:
         impact = _portfolio_impact_line(ticker)
         if impact:
             st.info(impact, icon=":material/science:")
-        _render_full_portfolio_impact(ticker)
+        _render_full_portfolio_impact(ticker, final_score)
 
     # --- Convergence score breakdown ---
     st.markdown("#### Convergence Signal")
