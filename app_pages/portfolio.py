@@ -117,9 +117,11 @@ def _render_stress_card(scenario: dict) -> None:
 
 
 def _run_analysis(start: str, end: str, weights: dict[str, float]) -> dict:
-    """Run the full factor analysis and stress tests. Returns a merged results dict."""
+    """Run the full factor analysis, stress tests, concentration, and risk metrics. Returns a merged results dict."""
     from factor_engine.portfolio import analyze_portfolio
     from factor_engine.stress_test import run_stress_tests
+    from factor_engine.concentration import run_concentration_analysis
+    from factor_engine.risk_metrics import compute_risk_metrics
 
     results = analyze_portfolio(start=start, end=end, weights=weights)
     h = results["headline"]
@@ -133,8 +135,16 @@ def _run_analysis(start: str, end: str, weights: dict[str, float]) -> dict:
         beta_gp=h["beta_gp"],
         alpha_daily=h["alpha_daily"],
     )
-    analysis_cache.save(results, stress)
-    return {**results, "stress_tests": stress}
+    concentration = run_concentration_analysis(
+        results["weights"], results["all_returns"], results["per_holding"]
+    )
+    risk_metrics = compute_risk_metrics(results["combined_rets"], results["factors"])
+
+    cached_at = analysis_cache.save(results, stress, concentration, risk_metrics)
+    return {
+        **results, "stress_tests": stress, "concentration": concentration,
+        "risk_metrics": risk_metrics, "cached_at": cached_at,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -391,6 +401,47 @@ st.info(data["summary_text"], icon=":material/lightbulb:")
 
 
 # ---------------------------------------------------------------------------
+# Risk metrics — volatility, Sharpe, Sortino, max drawdown
+# ---------------------------------------------------------------------------
+
+st.subheader("Risk metrics")
+
+risk_metrics = data.get("risk_metrics")
+if risk_metrics:
+    sharpe_display = f"{risk_metrics['sharpe_ratio']:.2f}" if risk_metrics["sharpe_ratio"] is not None else "—"
+    sortino_display = f"{risk_metrics['sortino_ratio']:.2f}" if risk_metrics["sortino_ratio"] is not None else "—"
+    with st.container(horizontal=True):
+        st.metric("Ann. volatility", f"{risk_metrics['annualized_volatility'] * 100:.1f}%", border=True)
+        st.metric(
+            "Sharpe ratio", sharpe_display, border=True,
+            help="(Annualized return − annualized risk-free rate) ÷ annualized volatility.",
+        )
+        st.metric(
+            "Sortino ratio", sortino_display, border=True,
+            help="Same numerator as Sharpe; denominator uses only downside deviation "
+                 "(daily excess returns below zero), not full volatility.",
+        )
+        st.metric(
+            "Max drawdown", f"{risk_metrics['max_drawdown'] * 100:.1f}%", border=True,
+            help=f"Peak {risk_metrics['max_drawdown_peak_date']} → "
+                 f"trough {risk_metrics['max_drawdown_trough_date']}",
+        )
+    st.caption(
+        f"Annualized return {risk_metrics['annualized_return'] * 100:+.2f}%  ·  "
+        f"Annualized risk-free rate {risk_metrics['annualized_rf'] * 100:.2f}% "
+        f"(short-duration Ken French daily series, duration-matched to this daily return series — "
+        f"distinct from the DCF engine's 10-year Treasury rate)  ·  "
+        f"Downside deviation {risk_metrics['downside_deviation'] * 100:.2f}%  ·  "
+        f"n = {risk_metrics['n_obs']} trading days"
+    )
+else:
+    st.caption(
+        ":gray[Risk metrics unavailable — this cached analysis predates this feature. "
+        "Click **Refresh analysis** in the sidebar to compute.]"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Per-holding attribution
 # ---------------------------------------------------------------------------
 
@@ -503,6 +554,211 @@ st.caption(
     "inception), though still short of RMW/CMA/HML's multi-decade Ken French history."
     + _intl_note
 )
+
+
+# ---------------------------------------------------------------------------
+# Concentration & Correlation
+# ---------------------------------------------------------------------------
+
+st.subheader("Concentration & Correlation")
+
+concentration = data.get("concentration")
+if not concentration:
+    st.caption(
+        ":gray[Concentration/correlation analysis unavailable — this cached analysis predates this "
+        "feature. Click **Refresh analysis** in the sidebar to compute.]"
+    )
+else:
+    top_n = concentration["top_n"]
+    hhi = concentration["hhi"]
+    top10_label = f"Top {top_n['top_10_capped_at']}" if top_n["top_10_capped_at"] < 10 else "Top 10"
+
+    with st.container(horizontal=True):
+        st.metric("Top 3", f"{top_n['top_3'] * 100:.1f}%", border=True)
+        st.metric("Top 5", f"{top_n['top_5'] * 100:.1f}%", border=True)
+        st.metric(top10_label, f"{top_n['top_10'] * 100:.1f}%", border=True)
+        st.metric(
+            "HHI", f"{hhi['hhi']:.3f}", border=True,
+            help="Herfindahl-Hirschman Index — sum of squared normalized weights, 0-1 scale "
+                 "(not the antitrust 0-10,000 convention).",
+        )
+        st.metric(
+            "Effective N", f"{hhi['effective_n']:.1f}", border=True,
+            help=f"1 ÷ HHI — the number of equal-sized positions this concentration behaves like, "
+                 f"vs. {hhi['n_holdings']} nominal holdings.",
+        )
+    if hhi["meaningfully_more_concentrated_than_count"]:
+        st.warning(
+            f"Effective N ({hhi['effective_n']:.1f}) is meaningfully below the nominal holding count "
+            f"({hhi['n_holdings']}) — this portfolio behaves like fewer independent bets than its "
+            f"position count alone suggests.",
+            icon=":material/warning:",
+        )
+
+    # --- Trailing correlation heatmap ---
+    st.markdown(
+        f"**Trailing {concentration['trailing_window_days']}-day correlation** "
+        ":gray[(actual daily returns, most recent ~12 months)]"
+    )
+    _tickers_order = list(data["weights"].keys())
+    corr_df = pd.DataFrame(concentration["trailing_correlation_matrix"])
+    corr_long = (
+        corr_df.reset_index()
+        .melt(id_vars="index", var_name="ticker_b", value_name="correlation")
+        .rename(columns={"index": "ticker_a"})
+    )
+    heatmap = (
+        alt.Chart(corr_long)
+        .mark_rect()
+        .encode(
+            x=alt.X("ticker_a:N", title=None, sort=_tickers_order),
+            y=alt.Y("ticker_b:N", title=None, sort=_tickers_order),
+            color=alt.Color(
+                "correlation:Q",
+                scale=alt.Scale(scheme="blueorange", domain=[-1, 1]),
+                legend=alt.Legend(title="Correlation"),
+            ),
+            tooltip=["ticker_a:N", "ticker_b:N", alt.Tooltip("correlation:Q", format="+.2f")],
+        )
+        .properties(height=320)
+    )
+    st.altair_chart(heatmap, use_container_width=True)
+    st.caption(
+        f"Average pairwise correlation: {concentration['trailing_avg_pairwise_correlation']:.3f}  ·  "
+        f"Overlap threshold: >{concentration['correlation_threshold']:.2f}"
+    )
+
+    # --- Clusters vs. cliques — two distinct views of the same threshold ---
+    col_cluster, col_clique = st.columns(2)
+    with col_cluster:
+        st.markdown("**Connected clusters**")
+        st.caption(
+            "Chained: any two linked positions merge their whole groups into one. Answers "
+            "\"how much of the portfolio moves as one block?\" — but a single broad-market "
+            "holding correlated with several others can chain unrelated groups together."
+        )
+        if concentration["trailing_clusters"]:
+            for c in concentration["trailing_clusters"]:
+                with st.container(border=True):
+                    st.markdown(" · ".join(f"`{t}`" for t in c["tickers"]))
+                    st.caption(
+                        f"Combined weight: {c['combined_weight'] * 100:.1f}%  ·  "
+                        f"Avg. correlation: {c['avg_pairwise_correlation']:.2f}"
+                    )
+        else:
+            st.caption(":gray[No clusters above threshold.]")
+
+    with col_clique:
+        st.markdown("**Correlation cliques**")
+        st.caption(
+            "Stricter: every position inside is directly correlated with every other. "
+            "Answers \"which specific positions are truly redundant with each other?\" — the "
+            "sharper view for spotting a hidden concentrated bet."
+        )
+        if concentration["trailing_cliques"]:
+            for c in concentration["trailing_cliques"]:
+                with st.container(border=True):
+                    st.markdown(" · ".join(f"`{t}`" for t in c["tickers"]))
+                    st.caption(
+                        f"Combined weight: {c['combined_weight'] * 100:.1f}%  ·  "
+                        f"Avg. correlation: {c['avg_pairwise_correlation']:.2f}"
+                    )
+        else:
+            st.caption(":gray[No cliques above threshold.]")
+
+    st.caption(
+        "Both views use the same >0.70 threshold (≈49% shared variance — the standard bar in "
+        "portfolio-risk literature). A ticker can appear in more than one clique (it's the bridge "
+        "between two genuinely distinct groups) but only ever one cluster (clusters are transitive)."
+    )
+
+    # --- Stress-period comparison — the key risk-awareness finding ---
+    st.markdown("#### Diversification under stress")
+    st.markdown(
+        "Correlation clusters/cliques above use **actual** recent returns. The comparison below "
+        "instead reuses this platform's own stress-test machinery — **each holding's current "
+        "factor betas applied to the actual historical factor returns** from the 2008/2020/2022 "
+        "scenarios (factor_engine/stress_test.py) — because raw price correlation over a narrow "
+        "4-8 week crisis window would be too thin a sample, and several current holdings "
+        "(QQQM, QTUM) didn't even exist yet in 2008/2020. This reconstruction sidesteps both "
+        "problems, at the cost of not being directly comparable in magnitude to the trailing "
+        "(actual) correlation above — read it as its own consistent comparison across the four "
+        "periods shown, not a like-for-like delta against the trailing numbers."
+    )
+
+    _period_order = {"2008_financial_crisis": 1, "2020_covid_crash": 2, "2022_rate_hike_bear": 3}
+    period_rows = [{
+        "period": "Current (trailing 12mo, actual)",
+        "avg_correlation": concentration["trailing_avg_pairwise_correlation"],
+        "n_cliques": len(concentration["trailing_cliques"]),
+        "largest_clique": max((len(c["tickers"]) for c in concentration["trailing_cliques"]), default=0),
+        "largest_clique_weight": max(
+            (c["combined_weight"] for c in concentration["trailing_cliques"]), default=0.0
+        ),
+        "order": 0,
+    }]
+    for s in concentration["stress_period_correlation"]:
+        period_rows.append({
+            "period": s["label"] + (" *" if not s["gp_available"] else ""),
+            "avg_correlation": s["avg_pairwise_correlation"],
+            "n_cliques": len(s["cliques"]),
+            "largest_clique": max((len(c["tickers"]) for c in s["cliques"]), default=0),
+            "largest_clique_weight": max((c["combined_weight"] for c in s["cliques"]), default=0.0),
+            "order": _period_order.get(s["key"], 9),
+        })
+    period_df = pd.DataFrame(period_rows).sort_values("order")
+
+    bar = (
+        alt.Chart(period_df)
+        .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4)
+        .encode(
+            x=alt.X("period:N", title=None, sort=list(period_df["period"])),
+            y=alt.Y(
+                "avg_correlation:Q", title="Average pairwise correlation",
+                scale=alt.Scale(domain=[0, 1]),
+            ),
+            color=alt.Color(
+                "avg_correlation:Q",
+                scale=alt.Scale(scheme="blues", domain=[0, 1]),
+                legend=None,
+            ),
+            tooltip=["period:N", alt.Tooltip("avg_correlation:Q", format=".3f"), "n_cliques:Q"],
+        )
+        .properties(height=260)
+    )
+    st.altair_chart(bar, use_container_width=True)
+
+    display_df = period_df[["period", "avg_correlation", "n_cliques", "largest_clique", "largest_clique_weight"]].copy()
+    display_df["largest_clique_weight"] = display_df["largest_clique_weight"] * 100
+    st.dataframe(
+        display_df.rename(columns={
+            "period": "Period",
+            "avg_correlation": "Avg. correlation",
+            "n_cliques": "Distinct cliques",
+            "largest_clique": "Largest clique (tickers)",
+            "largest_clique_weight": "Largest clique weight",
+        }),
+        hide_index=True,
+        column_config={
+            "Avg. correlation": st.column_config.NumberColumn(format="%.3f"),
+            "Largest clique weight": st.column_config.NumberColumn(format="%.1f%%"),
+        },
+    )
+
+    _any_gp_missing = any(not s["gp_available"] for s in concentration["stress_period_correlation"])
+    _gp_caveat = (
+        "  ·  :gray[* Gross Profitability (2013–present) predates this scenario — omitted from "
+        "the factor-implied reconstruction for that period, not zeroed, same caveat as the "
+        "portfolio-level stress test below.]"
+        if _any_gp_missing else ""
+    )
+    st.caption(
+        "In the trailing (actual) window, this portfolio holds multiple distinct correlation "
+        "cliques along thematic lines — value/dividend/industrial, semiconductor/AI, broad-market. "
+        "Under every one of the three historical stress scenarios, current factor exposures imply "
+        "**all holdings collapse into a single mutual clique** — the diversification visible today "
+        "would not have held during 2008, 2020, or 2022." + _gp_caveat
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -84,6 +84,51 @@ SCENARIOS: dict[str, dict] = {
 }
 
 
+def gp_available(factors: pd.DataFrame) -> bool:
+    """True if every day in `factors` has a GP value (see module docstring)."""
+    return "gp" in factors.columns and not factors["gp"].isna().any()
+
+
+def estimate_daily_returns(
+    factors: pd.DataFrame,
+    beta_market: float,
+    beta_smb: float,
+    beta_hml: float,
+    beta_rmw: float,
+    beta_cma: float,
+    beta_mom: float,
+    beta_gp: float,
+    alpha_daily: float,
+) -> tuple[pd.Series, bool]:
+    """
+    Reconstruct a daily estimated log-return series from factor betas applied
+    to actual historical daily factor returns — the same "current betas ×
+    historical factor path" model used for the portfolio-level scenario
+    estimate below, factored out so per-holding callers (see
+    factor_engine/concentration.py's factor-implied stress-period
+    correlation) can reuse the identical reconstruction formula instead of
+    duplicating it.
+
+    Returns (daily_r, gp_available) — gp_available mirrors the module-level
+    gating: the gp term is included only if every day in the window has a GP
+    value, otherwise omitted (not zeroed) from daily_r.
+    """
+    available = gp_available(factors)
+    daily_r = (
+        factors["rf"]
+        + alpha_daily
+        + beta_market * factors["mkt_excess"]
+        + beta_smb    * factors["smb"]
+        + beta_hml    * factors["hml"]
+        + beta_rmw    * factors["rmw"]
+        + beta_cma    * factors["cma"]
+        + beta_mom    * factors["mom"]
+    )
+    if available:
+        daily_r = daily_r + beta_gp * factors["gp"]
+    return daily_r, available
+
+
 def _estimate_scenario_return(
     factors: pd.DataFrame,
     beta_market: float,
@@ -106,21 +151,11 @@ def _estimate_scenario_return(
     for this window) rather than silently substituting zero.
     """
     n = len(factors)
-    gp_available = "gp" in factors.columns and not factors["gp"].isna().any()
 
-    # Daily estimated portfolio log-returns
-    daily_r = (
-        factors["rf"]
-        + alpha_daily
-        + beta_market * factors["mkt_excess"]
-        + beta_smb    * factors["smb"]
-        + beta_hml    * factors["hml"]
-        + beta_rmw    * factors["rmw"]
-        + beta_cma    * factors["cma"]
-        + beta_mom    * factors["mom"]
+    daily_r, gp_avail = estimate_daily_returns(
+        factors, beta_market, beta_smb, beta_hml, beta_rmw, beta_cma, beta_mom,
+        beta_gp, alpha_daily,
     )
-    if gp_available:
-        daily_r = daily_r + beta_gp * factors["gp"]
     period_return = float(np.expm1(daily_r.sum()))
 
     # Additive factor contributions (sum of log-return components)
@@ -130,7 +165,7 @@ def _estimate_scenario_return(
     rmw_contrib   = beta_rmw    * factors["rmw"].sum()
     cma_contrib   = beta_cma    * factors["cma"].sum()
     mom_contrib   = beta_mom    * factors["mom"].sum()
-    gp_contrib    = float(beta_gp * factors["gp"].sum()) if gp_available else None
+    gp_contrib    = float(beta_gp * factors["gp"].sum()) if gp_avail else None
     alpha_contrib = alpha_daily * n
     rf_contrib    = factors["rf"].sum()
 
@@ -144,7 +179,7 @@ def _estimate_scenario_return(
         "cma_contrib":     cma_contrib,
         "mom_contrib":     mom_contrib,
         "gp_contrib":      gp_contrib,
-        "gp_available":    gp_available,
+        "gp_available":    gp_avail,
         "alpha_contrib":   alpha_contrib,
         "rf_contrib":      rf_contrib,
     }

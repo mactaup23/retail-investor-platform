@@ -393,6 +393,9 @@ def analyze_portfolio(
         weights         — normalized weight dict
         raw_weights     — the weights as passed in (un-normalized)
         factors         — the factor DataFrame used
+        all_returns     — per-ticker daily return DataFrame (used to build
+                          combined_rets; also feeds concentration/correlation
+                          analysis — see factor_engine/concentration.py)
         combined_rets   — portfolio combined return Series
         headline        — Tier 1 regression results dict
         per_holding     — Tier 2 list of per-ticker regression dicts
@@ -426,6 +429,7 @@ def analyze_portfolio(
         "weights":       norm_weights,
         "raw_weights":   raw_weights,
         "factors":       factors,
+        "all_returns":   all_returns,
         "combined_rets": combined_rets,
         "headline":      headline,
         "per_holding":   per_holding,
